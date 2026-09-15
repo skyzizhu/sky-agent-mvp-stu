@@ -30,15 +30,17 @@ def make_client() -> OpenAI:
     return OpenAI(api_key=config.API_KEY, base_url=config.BASE_URL)
 
 
-def call_llm(client: OpenAI, messages: list, tools: list | None = None):
+def call_llm(client: OpenAI, messages: list, tools: list | None = None, **extra):
     """
-    最小封装的"模型调用节点"。
+    最小封装的"模型调用节点"。所有 LLM 调用都应走这里——
+    统一入口才能统一观测（RECORDER 只在这里生效）和统一改配置。
 
-    输入: messages（完整对话历史）, tools（工具声明，可选）
-    输出: assistant message 对象（可能含 content、也可能含 tool_calls）
+    输入: messages（完整对话历史）, tools（工具声明，可选）, extra（temperature/
+          response_format 等额外参数，透传给 API）
+    输出: assistant message 对象（可能含 content、也可能含 tool_calls）+ usage
     注意: 每次调用都把【全部历史】重发一遍——这是理解上下文成本的关键
     """
-    kwargs = dict(model=config.MODEL, messages=messages)
+    kwargs = dict(model=config.MODEL, messages=messages, **extra)
     if tools:
         kwargs["tools"] = tools
     resp = client.chat.completions.create(**kwargs)

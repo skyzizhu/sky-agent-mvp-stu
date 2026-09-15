@@ -255,13 +255,29 @@
 
 ---
 
+## ✅ 节点 16：Orchestrator-Workers 多智能体节点
+
+**代码**：`stages/07_multi_agent/orchestrator.py`（主）+ `sub_agent.py`（子）
+
+| 项 | 内容 |
+|---|---|
+| 目标 | 主 agent 拆题、多个子 agent 并行调研、只回传浓缩结论、主 agent 汇总 |
+| 作用 | 两大收益实测兑现：**并行省时**（墙钟 470s vs 串行合计 1182s，加速 2.5x）；**上下文隔离**（每个子 agent 干净上下文只管一个对象，主 agent 只收 ≤700 字结论——对比单 agent 同题 10 万 token） |
+| 怎么做 | ① decompose：JSON mode 拆成 1~4 份自包含任务书（含"范围不得重叠"，effort scaling：简单问题只给 1 份）；② dispatch：ThreadPoolExecutor 并行跑 `run_sub_agent`；③ 子 agent = 精简循环（任务书注入 system + 死线护栏 + 独立笔记文件 thread-local）；④ synthesize：汇总结论成最终报告 |
+| 输入/输出 | 用户问题 → 拆分策略 + 最终报告 + 每个子 agent 的统计 |
+| 着重注意 | 实测四课：① **收敛护栏必须随行**——子 agent 首跑全员 10 步耗尽不交卷（Stage 5 病根复发），死线注入移植后全员收敛；② **并行放大工具限流**——三个子 agent 同时打免费搜索触发超时/限流，需重试退避+错峰启动（stagger）；③ **反爬与登录墙**：部分中文站点（agents.baidu.com 需登录、百度百科 403）抓不到，工具可靠性是数据源问题不是架构问题——生产要换付费搜索源（Tavily/博查）；④ **诚实汇报会传染**：system 里"不许脑补"让主 agent 在子 agent 全军覆没时输出"本次调研失败，请勿用于决策"——护栏写进 prompt，责任链就通到了最后 |
+| N18 人工确认节点（HITL） | Stage 8 | 用特殊工具调用实现暂停等批准 |
+| N19 护栏节点 | Stage 8 | 轮数/费用上限、工具白名单、优雅收尾 |
+| N20 可观测性节点 | Stage 9 | 结构化 trace + 失败模式归类复盘 |
+
+---
+
 ## 🚧 后续节点预告（做到对应阶段时，在这里补全文档）
 
 | 节点 | 所属阶段 | 一句话说明 |
 |---|---|---|
-| N16 Orchestrator-Workers 多智能体节点 | Stage 7 | 主 agent 拆题、子 agent 并行、上下文隔离 |
-| N17 记忆节点 | Stage 8 | 跨会话偏好持久化（memory.json） |
-| N18 人工确认节点（HITL） | Stage 8 | 用特殊工具调用实现暂停等批准 |
+| N17 记忆节点（跨会话） | Stage 8 | memory.json 记住用户偏好，新会话注入 |
+| N18 人工确认节点（HITL） | Stage 8 | 特殊工具调用实现暂停等批准 |
 | N19 护栏节点 | Stage 8 | 轮数/费用上限、工具白名单、优雅收尾 |
 | N20 可观测性节点 | Stage 9 | 结构化 trace + 失败模式归类复盘 |
 

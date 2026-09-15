@@ -107,15 +107,23 @@ REAL_TOOLS = [
 
 
 def web_search(query: str) -> str:
-    try:
-        from ddgs import DDGS
-        results = list(DDGS().text(query, max_results=5))
-    except Exception as e:
-        # 可行动的错误：告诉模型重试或换个关键词
-        return f"错误：搜索失败({e})。请稍后用更简短的关键词重试。"
+    import time as _t
+    results = None
+    err = ""
+    # 重试+退避：并行子agent会同时打搜索接口，触发限流是常态，必须重试
+    for attempt in range(3):
+        try:
+            from ddgs import DDGS
+            results = list(DDGS().text(query, max_results=5))
+            if results:
+                break
+            err = "无结果"
+        except Exception as e:
+            err = str(e)
+        _t.sleep(2 * (attempt + 1))  # 退避：2s → 4s
     if not results:
-        return "没有找到相关结果。请尝试更换关键词：减少词数、或换用同义表达再搜一次。"
-    # 高信号输出：只要 title/url/description，每条摘要也截断
+        return (f"错误：搜索失败({err})，已重试3次。请稍等片刻后用更简短的关键词重试，"
+                f"或先用 fetch_url 直接访问已知的官方网址。")
     trimmed = [
         {"title": r.get("title", "")[:100],
          "url": r.get("href", ""),
@@ -156,23 +164,42 @@ REAL_REGISTRY = {"web_search": web_search, "fetch_url": fetch_url}
 # 需要时再读回——相当于"把工作台上的草稿纸收进抽屉，要用再拿出来"。
 # ============================================================
 
-NOTES_FILE = None  # 由使用方（各阶段脚本）初始化为具体路径
+NOTES_FILE = None  # 由使用方（各阶段脚本）初始化为具体路径（全局默认）
+
+# Stage 7：多智能体并行时，每个子agent需要独立的笔记文件。
+# 用 thread-local 存储各线程的路径：并行子agent互不干扰，NOTES_FILE 作全局兜底。
+import threading as _threading
+_notes_tls = _threading.local()
+
+
+def set_notes_file(path):
+    """在【当前线程】内设置笔记文件路径（每个子agent启动时各自调用）。"""
+    _notes_tls.path = str(path)
+
+
+def _current_notes_file():
+    return getattr(_notes_tls, "path", None) or NOTES_FILE
 
 
 def note_write(content: str) -> str:
     import time as _t
-    if NOTES_FILE is None:
-        return "错误：笔记文件未初始化。请先在代码中设置 tools.NOTES_FILE。"
-    NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(NOTES_FILE, "a", encoding="utf-8") as f:
+    notes = _current_notes_file()
+    if not notes:
+        return "错误：笔记文件未初始化。请先在代码中设置笔记文件路径。"
+    from pathlib import Path as _P
+    notes = _P(notes)
+    notes.parent.mkdir(parents=True, exist_ok=True)
+    with open(notes, "a", encoding="utf-8") as f:
         f.write(f"\n## {_t.strftime('%H:%M:%S')}\n{content[:2000]}\n")
     return "已写入笔记。记住：重要发现务必及时写笔记，上下文可能随时被压缩。"
 
 
 def note_read(dummy: str = "") -> str:
-    if NOTES_FILE is None or not NOTES_FILE.exists():
+    from pathlib import Path as _P
+    notes = _current_notes_file()
+    if not notes or not _P(notes).exists():
         return "笔记为空。请先用 note_write 记录关键发现。"
-    text = NOTES_FILE.read_text(encoding="utf-8")
+    text = _P(notes).read_text(encoding="utf-8")
     return text[:config.MAX_TOOL_RESULT_CHARS]
 
 

@@ -96,8 +96,8 @@
     </div>
 
     <div class="panel" style="margin-top:14px">
-      <h2>tools 说明书（JSON数组，可留空）</h2>
-      <textarea id="tools" rows="6" placeholder='[{"type":"function","function":{...}}]'></textarea>
+      <h2>tools 参数（工具说明书，JSON 数组）</h2>
+      <textarea id="tools" rows="6" placeholder='留空 = 请求体不含 tools 字段（模型不知道有任何工具存在）'></textarea>
       <div class="chips">
         <span class="chip" onclick="loadTools('weather')">示例：天气+计算器</span>
         <span class="chip" onclick="loadTools('bad')">示例：烂描述（对比实验）</span>
@@ -126,21 +126,42 @@
             <option value="required">required</option>
           </select></div>
       </div>
-      <div class="hint">留空的参数不会出现在请求体里——发出的请求永远所见即所得。</div>
+      <div class="grid2">
+        <div><label>🧠 思考模式 thinking</label>
+          <select id="thinking_mode" onchange="onThinkingChange()">
+            <option value="">(不设置 = API默认：开启, effort=high)</option>
+            <option value="enabled">enabled（强制开启）</option>
+            <option value="disabled">disabled（关闭思考）</option>
+          </select></div>
+        <div><label>思考力度 reasoning_effort（仅开启时发送）</label>
+          <select id="reasoning_effort" disabled>
+            <option value="">(不设置 = high)</option>
+            <option value="low">low（快，思考短）</option>
+            <option value="high">high（默认）</option>
+            <option value="max">max（慢，思考最长）</option>
+          </select></div>
+      </div>
+      <div class="hint">原理：开启时请求体加 "thinking":{"type":"enabled"}，思考内容出现在响应的 reasoning_content 字段。注意：思考模式下 temperature 等参数会被静默忽略；带 tools 的多轮对话必须回传 reasoning_content，否则 400。</div>
     </div>
 
     <button class="send" id="send" onclick="send()">🚀 发送请求</button>
   </div>
 
   <!-- ============ 右：原始输出 ============ -->
-  <div class="panel">
-    <h2>原始响应（API 返回的原文，未做任何处理）</h2>
-    <div class="status" id="status"></div>
-    <pre class="raw" id="raw">（左侧构造请求，点"发送请求"；这里会显示：
+  <div>
+    <div class="panel" id="thinking_panel" style="display:none; margin-bottom:14px; border-color:#d6c6f5;">
+      <h2 style="color:#8250df">💭 思考内容（reasoning_content）</h2>
+      <pre class="raw" id="thinking" style="max-height:34vh"></pre>
+    </div>
+    <div class="panel">
+      <h2>原始响应（API 返回的原文，未做任何处理）</h2>
+      <div class="status" id="status"></div>
+      <pre class="raw" id="raw">（左侧构造请求，点"发送请求"；这里会显示：
   1. request_sent —— 实际发出的完整请求体
   2. status —— HTTP 状态码
   3. raw —— API 返回的原始文本（含 content / reasoning_content /
      finish_reason / tool_calls / usage 全部字段；报错时是错误原文））</pre>
+    </div>
   </div>
 </main>
 
@@ -175,6 +196,10 @@ function addMsg(role='user', content){
     </div>
     <textarea placeholder="content">${content ?? PRESET_CONTENT[role] ?? ''}</textarea>`;
   $('msgs').appendChild(div);
+}
+function onThinkingChange(){
+  $('reasoning_effort').disabled = $('thinking_mode').value !== 'enabled';
+  if ($('thinking_mode').value !== 'enabled') $('reasoning_effort').value = '';
 }
 function onRoleChange(sel){
   const row = sel.closest('.msg');
@@ -219,6 +244,8 @@ function buildPayload(){
     if ($(k).value.trim()!=='') p[k] = $(k).value.trim();});
   if ($('response_format').value) p.response_format = $('response_format').value;
   if ($('tool_choice').value) p.tool_choice = $('tool_choice').value;
+  if ($('thinking_mode').value) p.thinking_mode = $('thinking_mode').value;
+  if ($('reasoning_effort').value) p.reasoning_effort = $('reasoning_effort').value;
   return p;
 }
 
@@ -229,6 +256,20 @@ async function send(){
     const r = await fetch('/api/chat', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify(buildPayload())});
     const data = await r.json();
+    // 思考内容单独提取展示（存在才显示面板）
+    let reasoning = null;
+    try {
+      const body = JSON.parse(data.raw);
+      reasoning = body.choices?.[0]?.message?.reasoning_content;
+    } catch(e) {}
+    const tp = $('thinking_panel');
+    if (reasoning) {
+      tp.style.display = '';
+      $('thinking').textContent = reasoning;
+    } else {
+      tp.style.display = 'none';
+      $('thinking').textContent = '';
+    }
     st.className = 'status ' + (data.status===200 ? 'ok':'err');
     st.textContent = `HTTP ${data.status}　|　耗时 ${data.elapsed_ms}ms　|　` +
       (data.status===200 ? '✅ 成功——在下方找 content / reasoning_content / finish_reason / tool_calls / usage'

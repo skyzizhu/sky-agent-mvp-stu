@@ -65,6 +65,19 @@ async def chat(payload: dict):
     if tc:
         request["tool_choice"] = tc
 
+    # ---- 思考模式（DeepSeek OpenAI格式协议）----
+    # 开启: "thinking":{"type":"enabled"} + 可选 reasoning_effort: low/high/max
+    # 关闭: "thinking":{"type":"disabled"}
+    # 不设置: 请求体不含该字段，走 API 默认（默认开启、effort=high）
+    tm = payload.get("thinking_mode")
+    if tm == "enabled":
+        request["thinking"] = {"type": "enabled"}
+        effort = payload.get("reasoning_effort")
+        if effort:
+            request["reasoning_effort"] = effort
+    elif tm == "disabled":
+        request["thinking"] = {"type": "disabled"}
+
     base_url = (payload.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
     headers = {"Authorization": f"Bearer {payload.get('api_key') or DEFAULT_KEY}",
                "Content-Type": "application/json"}

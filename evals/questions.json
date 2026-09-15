@@ -1,0 +1,77 @@
+{
+  "description": "Stage 5 评测集：12道研究题。key_points 只是给评分模型的参考要点（帮助判断覆盖度），不要求逐条命中。",
+  "questions": [
+    {
+      "id": "q01",
+      "type": "factual",
+      "question": "DeepSeek API 目前的模型和定价是怎样的？",
+      "key_points": ["模型名", "输入/输出价格", "来源域名"]
+    },
+    {
+      "id": "q02",
+      "type": "factual",
+      "question": "Dify 云托管版有哪些付费档位？各自大致价格？",
+      "key_points": ["Sandbox免费版", "Professional", "Team/企业版", "来源域名"]
+    },
+    {
+      "id": "q03",
+      "type": "factual",
+      "question": "Coze（扣子）个人版和团队版的订阅价格是多少？",
+      "key_points": ["免费版权益", "付费档位价格", "来源域名"]
+    },
+    {
+      "id": "q04",
+      "type": "factual",
+      "question": "智谱 GLM 目前开放平台提供哪些模型？",
+      "key_points": ["模型列表", "旗舰模型名", "来源域名"]
+    },
+    {
+      "id": "q05",
+      "type": "factual",
+      "question": "月之暗面 Kimi 最新的模型是什么？",
+      "key_points": ["最新模型名", "发布信息", "来源域名"]
+    },
+    {
+      "id": "q06",
+      "type": "comparison",
+      "question": "Notion 和飞书知识库的免费版权益有什么主要差异？",
+      "key_points": ["两者免费额度", "块数/人数限制", "来源域名"]
+    },
+    {
+      "id": "q07",
+      "type": "comparison",
+      "question": "Cursor 和 GitHub Copilot 的付费订阅价格分别是多少？",
+      "key_points": ["两者价格档位", "免费版有无", "来源域名"]
+    },
+    {
+      "id": "q08",
+      "type": "comparison",
+      "question": "网易云音乐和QQ音乐的黑胶/豪华绿钻会员月费各是多少？",
+      "key_points": ["两个价格", "连续包月价", "来源域名"]
+    },
+    {
+      "id": "q09",
+      "type": "open",
+      "question": "2026年国内大模型API价格战的整体情况如何？举出至少两家的定价作为证据。",
+      "key_points": ["趋势判断", "至少两家具体定价", "来源域名"]
+    },
+    {
+      "id": "q10",
+      "type": "open",
+      "question": "个人开发者想在微信生态做一个小程序，目前的认证和收费流程是什么？",
+      "key_points": ["注册认证费", "主体类型差异", "来源域名"]
+    },
+    {
+      "id": "q11",
+      "type": "factual",
+      "question": "飞书个人版和企业版目前分别怎么收费？",
+      "key_points": ["免费版", "商业版价格", "来源域名"]
+    },
+    {
+      "id": "q12",
+      "type": "comparison",
+      "question": "腾讯元宝和豆包两个App的定位有什么差异？",
+      "key_points": ["各自定位", "背后模型", "来源域名"]
+    }
+  ]
+}

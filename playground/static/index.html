@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>LLM Playground · 原始请求/响应实验室</title>
+<style>
+  :root { --bg:#0f1117; --panel:#171a23; --line:#2a2f3d; --txt:#e6e9f0;
+          --dim:#8b93a7; --acc:#4f8cff; --ok:#3fb970; --err:#e5534b; --warn:#d29922; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.6 -apple-system,"PingFang SC",sans-serif; }
+  header { padding:14px 22px; border-bottom:1px solid var(--line);
+           display:flex; gap:14px; align-items:baseline; }
+  header h1 { font-size:17px; margin:0; }
+  header span { color:var(--dim); font-size:12px; }
+  main { display:grid; grid-template-columns: 480px 1fr; gap:14px; padding:14px 22px; }
+  @media (max-width:1000px){ main { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .panel h2 { font-size:13px; margin:0 0 10px; color:var(--dim); font-weight:600;
+              text-transform:uppercase; letter-spacing:.5px; }
+  label { font-size:12px; color:var(--dim); display:block; margin:8px 0 3px; }
+  input, select, textarea { width:100%; background:#0d0f15; color:var(--txt);
+      border:1px solid var(--line); border-radius:6px; padding:7px 9px;
+      font:13px/1.5 ui-monospace,Monaco,monospace; }
+  textarea { resize:vertical; }
+  .msg { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; }
+  .msg .row { display:flex; gap:6px; align-items:center; margin-bottom:5px; }
+  .msg select.role { width:110px; }
+  .msg input.tcid { width:180px; font-size:11px; }
+  .msg .del { margin-left:auto; background:none; border:none; color:var(--dim);
+              cursor:pointer; font-size:15px; }
+  .msg textarea { min-height:52px; }
+  .sys  { border-left:3px solid #a371f7; }
+  .dev  { border-left:3px solid #d29922; }
+  .usr  { border-left:3px solid #4f8cff; }
+  .asst { border-left:3px solid #3fb970; }
+  .tool { border-left:3px solid #e5534b; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  button { background:var(--acc); color:#fff; border:none; border-radius:6px;
+           padding:8px 14px; cursor:pointer; font-size:13px; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--dim); }
+  button.send { width:100%; padding:11px; font-size:14px; margin-top:12px; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip { font-size:11px; padding:3px 9px; border:1px solid var(--line);
+          border-radius:99px; color:var(--dim); cursor:pointer; }
+  .chip:hover { color:var(--acc); border-color:var(--acc); }
+  .status { font-family:ui-monospace,monospace; font-size:12px; padding:6px 10px;
+            border-radius:6px; margin-bottom:10px; display:none; }
+  .status.ok { display:block; background:#12261a; color:var(--ok); }
+  .status.err { display:block; background:#2a1414; color:var(--err); }
+  pre.raw { background:#0d0f15; border:1px solid var(--line); border-radius:8px;
+            padding:12px; overflow:auto; max-height:72vh; margin:0;
+            font:12px/1.55 ui-monospace,Monaco,monospace; white-space:pre-wrap;
+            word-break:break-all; }
+  .hint { font-size:11px; color:var(--dim); margin-top:4px; }
+  .kv { font-size:12px; color:var(--dim); }
+  .kv b { color:var(--txt); font-family:ui-monospace,monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧪 LLM Playground</h1>
+  <span>构造请求 → 看原始响应。所有字段一字不删，报错也是教材。</span>
+  <span style="margin-left:auto" class="kv" id="cfg"></span>
+</header>
+
+<main>
+  <!-- ============ 左：请求构造 ============ -->
+  <div>
+    <div class="panel">
+      <h2>模型与连接</h2>
+      <div class="grid2">
+        <div><label>model</label><input id="model"></div>
+        <div><label>base_url</label><input id="base_url"></div>
+      </div>
+      <label>api_key（留空 = 用 .env 里的）</label>
+      <input id="api_key" placeholder="sk-...">
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>messages 数组</h2>
+      <div id="msgs"></div>
+      <button class="ghost" onclick="addMsg()">+ 添加消息</button>
+      <div class="chips">
+        <span class="chip" onclick="addMsg('system')">+system</span>
+        <span class="chip" onclick="addMsg('developer')">+developer</span>
+        <span class="chip" onclick="addMsg('user')">+user</span>
+        <span class="chip" onclick="addMsg('assistant')">+assistant</span>
+        <span class="chip" onclick="addMsg('tool')">+tool(带id)</span>
+      </div>
+      <div class="hint">实验建议：① developer 和 system 同时放，看模型听谁的；② 构造一条 assistant(tool_calls) + 对应 tool 消息，体会回填配对；③ 故意删掉 tool 消息里的 tool_call_id 看 400 报错。</div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>tools 说明书（JSON数组，可留空）</h2>
+      <textarea id="tools" rows="6" placeholder='[{"type":"function","function":{...}}]'></textarea>
+      <div class="chips">
+        <span class="chip" onclick="loadTools('weather')">示例：天气+计算器</span>
+        <span class="chip" onclick="loadTools('bad')">示例：烂描述（对比实验）</span>
+        <span class="chip" onclick="document.getElementById('tools').value=''">清空</span>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>请求参数</h2>
+      <div class="grid3">
+        <div><label>temperature</label><input id="temperature" placeholder="默认1"></div>
+        <div><label>max_tokens</label><input id="max_tokens" placeholder="默认无上限"></div>
+        <div><label>top_p</label><input id="top_p" placeholder="默认1"></div>
+      </div>
+      <div class="grid2">
+        <div><label>response_format</label>
+          <select id="response_format">
+            <option value="">(不设置)</option>
+            <option value="json_object">json_object</option>
+          </select></div>
+        <div><label>tool_choice</label>
+          <select id="tool_choice">
+            <option value="">(不设置)</option>
+            <option value="auto">auto</option>
+            <option value="none">none</option>
+            <option value="required">required</option>
+          </select></div>
+      </div>
+      <div class="hint">留空的参数不会出现在请求体里——发出的请求永远所见即所得。</div>
+    </div>
+
+    <button class="send" id="send" onclick="send()">🚀 发送请求</button>
+  </div>
+
+  <!-- ============ 右：原始输出 ============ -->
+  <div class="panel">
+    <h2>原始响应（API 返回的原文，未做任何处理）</h2>
+    <div class="status" id="status"></div>
+    <pre class="raw" id="raw">（左侧构造请求，点"发送请求"；这里会显示：
+  1. request_sent —— 实际发出的完整请求体
+  2. status —— HTTP 状态码
+  3. raw —— API 返回的原始文本（含 content / reasoning_content /
+     finish_reason / tool_calls / usage 全部字段；报错时是错误原文））</pre>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// ---------- 配置加载 ----------
+fetch('/api/config').then(r=>r.json()).then(c=>{
+  $('model').value = c.model; $('base_url').value = c.base_url;
+  $('cfg').innerHTML = `model: <b>${c.model}</b> · key: ${c.has_key?'来自.env ✓':'未配置 ✗'}`;
+});
+
+// ---------- 消息行 ----------
+const PRESET_CONTENT = {
+  system: "你是一个简洁的助手，回答不超过三句话。",
+  developer: "输出必须使用简体中文。",
+  user: "北京现在多少度？",
+  assistant: "",
+  tool: '{"city":"北京","temp_c":26}'
+};
+function addMsg(role='user', content){
+  const div = document.createElement('div');
+  div.className = 'msg ' + role.slice(0,4);
+  div.innerHTML = `
+    <div class="row">
+      <select class="role" onchange="onRoleChange(this)">
+        ${['system','developer','user','assistant','tool'].map(r=>
+          `<option ${r===role?'selected':''}>${r}</option>`).join('')}
+      </select>
+      <input class="tcid" placeholder='tool_call_id（仅tool角色）' style="display:${role==='tool'?'':'none'}">
+      <button class="del" onclick="this.parentElement.parentElement.remove()">✕</button>
+    </div>
+    <textarea placeholder="content">${content ?? PRESET_CONTENT[role] ?? ''}</textarea>`;
+  $('msgs').appendChild(div);
+}
+function onRoleChange(sel){
+  const row = sel.closest('.msg');
+  row.className = 'msg ' + sel.value.slice(0,4);
+  row.querySelector('.tcid').style.display = sel.value==='tool' ? '' : 'none';
+}
+addMsg('system'); addMsg('user');
+
+// ---------- 工具示例 ----------
+const TOOLSETS = {
+  weather: [
+    {type:"function", function:{name:"get_weather",
+      description:"查询指定城市当前的天气。当用户问天气相关问题时调用。",
+      parameters:{type:"object", properties:{city:{type:"string",description:"城市名，如：北京"}}, required:["city"]}}},
+    {type:"function", function:{name:"calculator",
+      description:"计算四则运算表达式的值，仅支持 + - * / 和括号。",
+      parameters:{type:"object", properties:{expression:{type:"string",description:"如 (3+4)*2"}}, required:["expression"]}}}
+  ],
+  bad: [
+    {type:"function", function:{name:"get_weather",
+      description:"weather tool",
+      parameters:{type:"object", properties:{c:{type:"string"}}, required:["c"]}}}
+  ]
+};
+function loadTools(name){
+  $('tools').value = JSON.stringify(TOOLSETS[name], null, 2);
+}
+
+// ---------- 收集与发送 ----------
+function buildPayload(){
+  const messages = [...document.querySelectorAll('.msg')].map(m=>{
+    const role = m.querySelector('.role').value;
+    const item = {role, content: m.querySelector('textarea').value};
+    const tcid = m.querySelector('.tcid').value.trim();
+    if (role==='tool' && tcid) item.tool_call_id = tcid;
+    return item;
+  });
+  const p = {model: $('model').value.trim(), base_url: $('base_url').value.trim(),
+             messages};
+  if ($('api_key').value.trim()) p.api_key = $('api_key').value.trim();
+  if ($('tools').value.trim()) p.tools = $('tools').value;
+  ['temperature','max_tokens','top_p'].forEach(k=>{
+    if ($(k).value.trim()!=='') p[k] = $(k).value.trim();});
+  if ($('response_format').value) p.response_format = $('response_format').value;
+  if ($('tool_choice').value) p.tool_choice = $('tool_choice').value;
+  return p;
+}
+
+async function send(){
+  const btn = $('send'); btn.disabled = true; btn.textContent = '⏳ 请求中…';
+  const st = $('status'); st.className='status';
+  try {
+    const r = await fetch('/api/chat', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(buildPayload())});
+    const data = await r.json();
+    st.className = 'status ' + (data.status===200 ? 'ok':'err');
+    st.textContent = `HTTP ${data.status}　|　耗时 ${data.elapsed_ms}ms　|　` +
+      (data.status===200 ? '✅ 成功——在下方找 content / reasoning_content / finish_reason / tool_calls / usage'
+                         : '❌ 报错——错误原文就在下面，读它，这是最好的教材');
+    // 原始展示：请求体 + 响应原文，一字不格式化
+    $('raw').textContent =
+      "/***************************** 实际发出的请求体 ****************************/\n" +
+      JSON.stringify(data.request_sent, null, 2) +
+      "\n\n/***************************** API 返回的原始文本 ****************************/\n" +
+      data.raw;
+  } catch(e){
+    st.className='status err'; st.textContent = '前端错误: '+e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = '🚀 发送请求';
+  }
+}
+</script>
+</body>
+</html>

@@ -126,8 +126,13 @@
             <option value="required">required</option>
           </select></div>
       </div>
+      <div class="hint">留空的参数不会出现在请求体里——发出的请求永远所见即所得。</div>
+    </div>
+
+    <div class="panel" style="margin-top:14px; border-color:#d6c6f5;">
+      <h2 style="color:#8250df">🧠 思考模式（Thinking Mode）</h2>
       <div class="grid2">
-        <div><label>🧠 思考模式 thinking</label>
+        <div><label>thinking 开关</label>
           <select id="thinking_mode" onchange="onThinkingChange()">
             <option value="">(不设置 = API默认：开启, effort=high)</option>
             <option value="enabled">enabled（强制开启）</option>
@@ -141,7 +146,7 @@
             <option value="max">max（慢，思考最长）</option>
           </select></div>
       </div>
-      <div class="hint">原理：开启时请求体加 "thinking":{"type":"enabled"}，思考内容出现在响应的 reasoning_content 字段。注意：思考模式下 temperature 等参数会被静默忽略；带 tools 的多轮对话必须回传 reasoning_content，否则 400。</div>
+      <div class="hint">原理：开启时请求体加 "thinking":{"type":"enabled"}，思考内容出现在响应的 reasoning_content 字段（右侧会置顶展示）。注意：思考模式下 temperature 等参数会被静默忽略；带 tools 的多轮对话必须回传 reasoning_content，否则 400。</div>
     </div>
 
     <button class="send" id="send" onclick="send()">🚀 发送请求</button>

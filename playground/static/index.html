@@ -152,20 +152,25 @@
     <button class="send" id="send" onclick="send()">🚀 发送请求</button>
   </div>
 
-  <!-- ============ 右：原始输出 ============ -->
+  <!-- ============ 右：三块输出 ============ -->
   <div>
-    <div class="panel" id="thinking_panel" style="display:none; margin-bottom:14px; border-color:#d6c6f5;">
-      <h2 style="color:#8250df">💭 思考内容（reasoning_content）</h2>
-      <pre class="raw" id="thinking" style="max-height:34vh"></pre>
+    <div class="status" id="status"></div>
+
+    <div class="panel" style="margin-bottom:14px; border-color:#d6c6f5;">
+      <h2 style="color:#8250df">① 💭 思考内容（reasoning_content）</h2>
+      <pre class="raw" id="thinking" style="max-height:30vh">（发送请求后显示。没有思考内容时，这里会说明原因）</pre>
     </div>
+
+    <div class="panel" style="margin-bottom:14px">
+      <h2>② 📤 实际发出的请求体（request_sent）</h2>
+      <pre class="raw" id="req_sent" style="max-height:30vh">（发送请求后显示）</pre>
+    </div>
+
     <div class="panel">
-      <h2>原始响应（API 返回的原文，未做任何处理）</h2>
-      <div class="status" id="status"></div>
-      <pre class="raw" id="raw">（左侧构造请求，点"发送请求"；这里会显示：
-  1. request_sent —— 实际发出的完整请求体
-  2. status —— HTTP 状态码
-  3. raw —— API 返回的原始文本（含 content / reasoning_content /
-     finish_reason / tool_calls / usage 全部字段；报错时是错误原文））</pre>
+      <h2>③ 📄 API 返回文本（已格式化；报错时为错误原文）</h2>
+      <pre class="raw" id="raw">（发送请求后显示。重点字段：choices[0].message.content（最终输出）、
+choices[0].finish_reason（stop/tool_calls/length）、
+choices[0].message.tool_calls（点的菜）、usage（token账单））</pre>
     </div>
   </div>
 </main>
@@ -261,30 +266,32 @@ async function send(){
     const r = await fetch('/api/chat', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify(buildPayload())});
     const data = await r.json();
-    // 思考内容单独提取展示（存在才显示面板）
-    let reasoning = null;
-    try {
-      const body = JSON.parse(data.raw);
-      reasoning = body.choices?.[0]?.message?.reasoning_content;
-    } catch(e) {}
-    const tp = $('thinking_panel');
+
+    // ② 请求体：格式化展示
+    $('req_sent').textContent = JSON.stringify(data.request_sent, null, 2);
+
+    // ③ API 返回：能解析就格式化，不能（如网络错误）就原样显示
+    let body = null;
+    try { body = JSON.parse(data.raw); } catch(e) {}
+    $('raw').textContent = body ? JSON.stringify(body, null, 2) : data.raw;
+
+    // ① 思考内容：单独提取；缺席时说明原因
+    const reasoning = body?.choices?.[0]?.message?.reasoning_content;
     if (reasoning) {
-      tp.style.display = '';
       $('thinking').textContent = reasoning;
+    } else if (data.status !== 200) {
+      $('thinking').textContent = '本次请求失败（HTTP ' + data.status + '），无思考内容。原因见下方 ③ 的错误原文。';
+    } else if ((data.request_sent.thinking || {}).type === 'disabled') {
+      $('thinking').textContent = '本次请求已关闭思考（thinking.type=disabled），'
+        + '响应中不含 reasoning_content 字段——这就是"关闭思考"的样子。';
     } else {
-      tp.style.display = 'none';
-      $('thinking').textContent = '';
+      $('thinking').textContent = '本次响应未包含 reasoning_content。'
+        + '可能原因：模型判断无需深入思考。可对比：在左栏把思考模式切到 enabled 再发一次。';
     }
+
     st.className = 'status ' + (data.status===200 ? 'ok':'err');
     st.textContent = `HTTP ${data.status}　|　耗时 ${data.elapsed_ms}ms　|　` +
-      (data.status===200 ? '✅ 成功——在下方找 content / reasoning_content / finish_reason / tool_calls / usage'
-                         : '❌ 报错——错误原文就在下面，读它，这是最好的教材');
-    // 原始展示：请求体 + 响应原文，一字不格式化
-    $('raw').textContent =
-      "/***************************** 实际发出的请求体 ****************************/\n" +
-      JSON.stringify(data.request_sent, null, 2) +
-      "\n\n/***************************** API 返回的原始文本 ****************************/\n" +
-      data.raw;
+      (data.status===200 ? '✅ 成功——三块输出已更新' : '❌ 报错——③ 里的错误原文就是教材');
   } catch(e){
     st.className='status err'; st.textContent = '前端错误: '+e.message;
   } finally {

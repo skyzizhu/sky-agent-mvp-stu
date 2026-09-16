@@ -3,6 +3,19 @@
 > 目标：通过亲手做一个 MVP Agent，理解 agent 的框架、流程、节点，以及模型调用、循环、工具、上下文、多智能体等所有关键细节。
 > 方法论依据：Anthropic《Building Effective Agents》+ OpenAI《A Practical Guide to Building Agents》+ HumanLayer《12-Factor Agents》+ HuggingFace AI Agents Course。
 
+## 📚 核心文档导航（学习材料体系）
+
+| 文档 | 内容 | 何时看 |
+|---|---|---|
+| [AGENT_NODES.md](./AGENT_NODES.md) | **节点详解手册**：节点 0–21 的目标/作用/做法/输入/输出/注意点，含全局架构图 | 学每个节点前预习、复习时对照 |
+| [PITFALLS.md](./PITFALLS.md) | **37 条踩坑清单**：各节点易错问题 → 造成的状况 → 最终效果 → 解决方案 | 写代码前后对照检查；面试备战 |
+| [notes/](./notes/) | 10 个阶段的复盘笔记（含踩坑实录与实测数据） | 每阶段结束时回顾 |
+| [evals/](./evals/) | 评测集（12 题）+ LLM-as-judge + 三方对比实验报告 | 任何改动前后跑回归 |
+| [playground/](./playground/) | 交互式 LLM 实验室：表单构造请求、原始响应展示、思考模式开关 | 研究字段/参数行为时 |
+| [observatory/index.html](./observatory/index.html) | 运行观测面板：成功率、token 账单、失败分布、运行历史 | 日常查看 agent 健康度 |
+
+> 阅读顺序建议：本 README（方案）→ AGENT_NODES.md（原理）→ 边写代码边查 PITFALLS.md（避坑）。
+
 ---
 
 ## 一、先建立心智模型：Agent 到底是什么
@@ -134,26 +147,33 @@ for step in range(20):                          # 停止条件①：最大轮数
 | 框架 | **前 9 个阶段完全不用框架** | 12-Factor 与 Anthropic 的共同建议：框架的抽象会遮住 prompt 和循环，出问题难调试，自己写一遍才学得到东西；Stage 10 再用框架重写做对比 |
 | 记录 | 每次运行把完整 messages 存成 JSONL 到 `traces/` | 可观测性的最朴素形态 |
 
-仓库结构建议（每个阶段一个文件夹，老代码不动，新代码复制演进）：
+仓库实际结构（每个阶段一个文件夹，老代码不动，新代码复制演进）：
 
 ```
 agent-mvp-stu/
-├── README.md            # 本方案
-├── notes/               # 每阶段的学习笔记 + 复盘（按 PM 复盘文档的习惯写）
-├── evals/               # 评测集（问题 + 评分标准）与评分脚本
-├── traces/              # 每次运行的完整对话/工具调用日志（你的"漏斗数据"）
-└── stages/
-    ├── 00_first_chat/
-    ├── 01_tool_call/
-    ├── 02_agent_loop/
-    ├── 03_real_tools/
-    ├── 04_context/
-    ├── 05_structured_eval/
-    ├── 06_planner_reflection/
-    ├── 07_multi_agent/
-    ├── 08_memory_hitl_guardrails/
-    ├── 09_observability/
-    └── 10_framework_mcp/
+├── README.md            # 本方案（学习路线图）
+├── AGENT_NODES.md       # 节点详解手册（节点 0-21，原理+避坑）
+├── PITFALLS.md          # 37 条踩坑清单（易错点→状况→效果→解决）
+├── config.py            # 全局配置（模型三要素 + 压缩/循环参数）
+├── common/              # 公共模块：llm_client / tools / context / memory / guardrails / mcp_client / observability
+├── stages/              # 10 个阶段，每阶段一个文件夹（老代码不动，复制演进）
+│   ├── 00_first_chat/        # 多轮对话，看懂 messages 与 token
+│   ├── 01_tool_call/         # 单次工具调用链
+│   ├── 02_agent_loop/        # ★ Agent Loop（核心）
+│   ├── 03_real_tools/        # 真实搜索/抓取 + capture_full_io 日志脚本
+│   ├── 04_context/           # 上下文工程（compaction + 笔记）
+│   ├── 05_structured_eval/   # 结构化输出（Plan/Execute/Report）
+│   ├── 06_patterns/          # workflow / 反思模式 + 三方对比实验
+│   ├── 07_multi_agent/       # orchestrator-workers 多智能体
+│   ├── 08_production/        # 生产三件套集成（记忆/HITL/护栏）
+│   ├── 09_observability/     # 失败归类器 + 观测面板生成器
+│   └── 10_framework_mcp/     # 选修（MCP 客户端已实现在 common/）
+├── playground/          # 交互式 LLM 实验室（FastAPI + 浅色单页）
+├── observatory/         # 运行观测面板（静态 HTML，dashboard.py 生成）
+├── evals/               # 评测集 + judge + 运行器 + 结果报告
+├── notes/               # 各阶段复盘笔记 + 完整输入输出存档 + agent 笔记
+├── logs/                # runs.jsonl 统一运行日志 + 失败归类报告
+└── traces/              # 每次运行的完整 trace（.gitignore 已忽略内容）
 ```
 
 ---

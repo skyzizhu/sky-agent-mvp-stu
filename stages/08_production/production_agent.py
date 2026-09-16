@@ -27,6 +27,7 @@ from common.memory import MemoryStore, extract_preferences
 from common.guardrails import (Budget, approval_required, ask_human,
                                WRAP_UP_MSG, DANGEROUS_TOOLS)
 from common.observability import log_run
+from common.mcp_client import MCPClient
 
 # ---- 危险工具：模拟"对外发送"（MVP 不真发，只演示 HITL 流程） ----
 def send_report(recipient: str, subject: str) -> str:
@@ -76,6 +77,21 @@ def main():
     tools_mod.REGISTRY["send_report"] = send_report
     all_tools = tools_mod.REAL_TOOLS + SEND_TOOL
 
+    # ===== Stage 10：MCP 接入（opt-in，设 MCP_FS=1 启用）=====
+    mcp = None
+    if os.getenv("MCP_FS") == "1":
+        mcp = MCPClient("fs", "npx", [
+            "-y", "@modelcontextprotocol/server-filesystem", str(ROOT)])
+        mcp.start()
+        all_tools += mcp.openai_tools()
+        # 安全设计：外部MCP工具默认不可信，写类自动归入危险级（走HITL）
+        for t in mcp.openai_tools():
+            n = t["function"]["name"]
+            if any(k in n for k in ("write", "edit", "move", "create")):
+                DANGEROUS_TOOLS[n] = "外部MCP写操作：会修改本地文件"
+        print(f"[MCP] 已接入 filesystem server，"
+              f"新增 {len(mcp.openai_tools())} 个工具（写类已标危险级）")
+
     # ===== 护栏：预算（LOW_BUDGET=1 时用 3000 演示优雅收尾）=====
     budget_max = 3000 if os.getenv("LOW_BUDGET") else 60000
     budget = Budget(budget_max)
@@ -121,7 +137,10 @@ def main():
                                  "content": receipt})
                 continue  # 拒绝/批准的回执都作为结果喂回，批准了也不在循环里执行
             try:
-                result = tools_mod.dispatch(tc.function.name, args)
+                if mcp and mcp.owns(tc.function.name):
+                    result = mcp.call_tool(tc.function.name, args)  # 转发给MCP server
+                else:
+                    result = tools_mod.dispatch(tc.function.name, args)
             except Exception as e:
                 result = f"工具执行异常({type(e).__name__})：{e}"
                 errors.append(f"{tc.function.name}: {e}")

@@ -322,9 +322,23 @@
 
 ---
 
+## ✅ 节点 21（选修·Stage 10 前半）：MCP 客户端节点
+
+**代码**：`common/mcp_client.py` + `stages/08_production/production_agent.py`（`MCP_FS=1` 启用）
+
+| 项 | 内容 |
+|---|---|
+| 目标 | agent 能接入外部 MCP server，把生态里的工具动态挂进自己的工具箱 |
+| 作用 | 工具从"自己写死"升级为"动态发现"：接一个 server = 多一组工具，不改 agent 核心代码。循环/上下文/记忆全部零改动——MCP 只标准化工具的发现(list_tools)、描述(schema)、调用(call_tool)，不碰 agent 主权 |
+| 怎么做 | ① 后台线程跑 asyncio 事件循环，与 server 保持 stdio 会话常驻，主线程用 `run_coroutine_threadsafe` 提交调用（同步 agent 用同步接口）；② **关键转换**：MCP 工具的 `input_schema` 就是 JSON Schema，套上 OpenAI tools 信封即可直接用，工具名加前缀 `mcp_fs_` 防冲突；③ dispatch 加分支：属于 MCP 的调用转发 `call_tool` |
+| 输入/输出 | server 启动命令（如 `npx @modelcontextprotocol/server-filesystem <dir>`）→ 工具清单合并进 tools 参数 → 调用结果文本回填 |
+| 着重注意 | 实测三课：① **又是 pydantic 蛇形命名**（`input_schema` 不是 `inputSchema`）——本家族第 4 次出现，凡第三方 SDK 的 pydantic 对象先 dir() 看真名；② **异常会被 anyio TaskGroup 包成 ExceptionGroup**，必须打印 traceback 才能定位；③ **安全设计：外部 MCP 工具默认不可信**，写类（write/edit/move/create）自动归入危险级走 HITL——接入生态的同时把 Stage 8 的安全件自动带上 |
+
+---
+
 ## 🎓 学习路线完结
 
-节点 0-20 全部完成。Stage 10（框架对比 + MCP）为选修加餐：用框架重写对比、把 web_search 包成 MCP server。
+节点 0-20 全部完成。Stage 10（框架对比 + MCP）为选修加餐：MCP 客户端已实现（节点 21），剩余选做：LangGraph 重写对比、把自己工具包成 MCP server。
 
 ---
 

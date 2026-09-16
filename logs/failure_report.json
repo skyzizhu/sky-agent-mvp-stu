@@ -1,0 +1,13 @@
+{
+  "dist": {
+    "预算截断": 1
+  },
+  "items": [
+    {
+      "run_id": "a82f0ceb",
+      "question": "调研 Notion 和 Confluence 的差异",
+      "category": "预算截断",
+      "evidence": "停止原因为 budget_exhausted，且工具错误均为无。"
+    }
+  ]
+}

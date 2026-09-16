@@ -308,11 +308,23 @@
 
 ---
 
-## 🚧 后续节点预告
+## ✅ 节点 20：可观测性节点（Observability）
 
-| 节点 | 所属阶段 | 一句话说明 |
-|---|---|---|
-| N20 可观测性节点 | Stage 9 | 结构化 trace + 失败模式归类复盘 |
+**代码**：`common/observability.py`（RunLog）+ `stages/09_observability/classify_failures.py`（失败归类）+ `dashboard.py`（面板）
+
+| 项 | 内容 |
+|---|---|
+| 目标 | 把散落各处的记录（traces/、CallRecorder、print、memory.json）统一成"能回答问题的观测系统" |
+| 作用 | agent 上线后 PM 的日常 = 看数据、归类失败、驱动改进。没有它的后果本项目反复演示过：记忆提取静默返回空、worker 集体不交卷、token 计量为 0——全是"看不到"的代价 |
+| 怎么做 | 三层：① **RunLog**：每次运行追加一行结构化 JSONL 到 `logs/runs.jsonl`（问题/实现/步数/工具序列/tokens/预算/stop_reason/errors），`log_run()/load_runs()` 一处写入处处可查；② **失败归类**：LLM 把非正常收尾的运行归入固定类目（工具失败/未收敛/预算截断/数据缺失/审批拒绝），输出分布表；③ **面板**：`dashboard.py` 生成静态 HTML（成功收尾率、token 总量/均值、失败分布条形图、运行历史表） |
+| 输入/输出 | 各实现的运行结束事件 → `logs/runs.jsonl` + `observatory/index.html` |
+| 着重注意 | ① **统一入口才能统一观测**（Stage 6 教训的制度化）：绕过 call_llm 的调用、绕过 log_run 的运行都是盲区；② 归类提示词要教边界——"审批拒绝是正常拦截不算故障"，否则安全机制会被误报成故障；③ 面板回答三问即合格：成功率多少？token 花在哪？失败归哪几类？ |
+
+---
+
+## 🎓 学习路线完结
+
+节点 0-20 全部完成。Stage 10（框架对比 + MCP）为选修加餐：用框架重写对比、把 web_search 包成 MCP server。
 
 ---
 

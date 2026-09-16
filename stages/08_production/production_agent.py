@@ -26,6 +26,7 @@ from common.context import compact_messages
 from common.memory import MemoryStore, extract_preferences
 from common.guardrails import (Budget, approval_required, ask_human,
                                WRAP_UP_MSG, DANGEROUS_TOOLS)
+from common.observability import log_run
 
 # ---- 危险工具：模拟"对外发送"（MVP 不真发，只演示 HITL 流程） ----
 def send_report(recipient: str, subject: str) -> str:
@@ -85,6 +86,7 @@ def main():
         {"role": "user", "content": question},
     ]
     stopped_reason = "model_done"
+    tool_sequence, errors = [], []
 
     for step in range(1, config.MAX_LOOP_STEPS + 1):
         if step == config.MAX_LOOP_STEPS - 1:  # 步数死线（老朋友）
@@ -111,13 +113,18 @@ def main():
         # ===== HITL：危险工具执行前必须人工批准 =====
         for tc in msg.tool_calls:
             args = json.loads(tc.function.arguments)
+            tool_sequence.append(tc.function.name)
             if approval_required(tc.function.name):
                 approved, receipt = ask_human(tc.function.name,
                                               tc.function.arguments)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": receipt})
                 continue  # 拒绝/批准的回执都作为结果喂回，批准了也不在循环里执行
-            result = tools_mod.dispatch(tc.function.name, args)
+            try:
+                result = tools_mod.dispatch(tc.function.name, args)
+            except Exception as e:
+                result = f"工具执行异常({type(e).__name__})：{e}"
+                errors.append(f"{tc.function.name}: {e}")
             messages.append({"role": "tool", "tool_call_id": tc.id,
                              "content": result})
 
@@ -128,6 +135,13 @@ def main():
     new_prefs = extract_preferences(client, transcript)
     print(f"[记忆] 提取到 {len(new_prefs)} 条候选: {new_prefs}")  # 可观测性：提取环节必须有回显
     added = memory.merge(new_prefs)
+
+    # ===== Stage 9：统一运行日志（一处写入，处处可查）=====
+    rec = log_run(impl="08_production", question=question[:80], steps=step,
+                  tool_calls=tool_sequence, tokens=budget.used,
+                  budget_max=budget.max, stop_reason=stopped_reason,
+                  errors=errors, extra={"new_preferences": added})
+    print(f"[观测] 运行已记录: run_id={rec['run_id']} → logs/runs.jsonl")
     print(f"\n[记忆] 本次沉淀 {added} 条新偏好 → {memory.path}")
 
     print(f"[结算] 预算 {budget.used}/{budget.max} tok | 停止原因: {stopped_reason}")

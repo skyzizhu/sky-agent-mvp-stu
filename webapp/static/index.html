@@ -109,9 +109,9 @@
   <div>
     <div class="panel">
       <div class="btnrow" style="margin:0 0 8px" id="tiers">
-        <button class="tier sel" data-t="quick">⚡ 快问 · 1万 tok</button>
+        <button class="tier" data-t="quick">⚡ 快问 · 1万 tok</button>
         <button class="tier sel" data-t="standard">📊 标准 · 3万 tok</button>
-        <button class="tier sel" data-t="deep">🔍 深度 · 10万 tok</button>
+        <button class="tier" data-t="deep">🔍 深度 · 10万 tok</button>
       </div>
       <textarea id="question" placeholder="输入研究问题，如：对比 Coze 和 Dify 的收费模式"></textarea>
       <div class="btnrow">
@@ -148,6 +148,7 @@ let runId = null, es = null, liveMode = false;
 let curGroup = null, lastApprovalLi = null;
 let TIERS = {quick:10000, standard:30000, deep:100000};
 const esc = t => String(t ?? '').replace(/</g,'&lt;');
+const msBadge = ms => ms != null ? ` <span class="tt">⏱ ${ms}ms</span>` : '';
 
 fetch('/api/config').then(r=>r.json()).then(c=>{
   $('model').textContent = '模型: ' + c.model;
@@ -157,6 +158,18 @@ fetch('/api/config').then(r=>r.json()).then(c=>{
     if (TIERS[b.dataset.t]) b.textContent =
       b.textContent.replace(/· .*$/, '· ' + Number(TIERS[b.dataset.t]).toLocaleString() + ' tok');
   });
+});
+
+// 档位选择：点选切换 + 同步预算仪表
+let tier = 'standard';
+document.querySelectorAll('#tiers .tier').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#tiers .tier').forEach(x => x.classList.remove('sel'));
+    b.classList.add('sel');
+    tier = b.dataset.t;
+    $('budget_text').textContent = Number(TIERS[tier] || 30000).toLocaleString() + ' tok';
+    $('budget_fill').style.width = '0%';
+  };
 });
 
 function loadHistory(){

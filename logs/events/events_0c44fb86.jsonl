@@ -1,0 +1,6 @@
+{"type": "memory_inject", "count": 5, "text": "【用户长期记忆（历史会话中沉淀的偏好，请遵守）】\n- 输出使用简体中文\n- 结论用表格进行对比呈现\n- 研究/关注方向为竞品调研，重点关注国内AI产品\n- 结论偏好用表格进行对比呈现\n- 研究/关注方向为竞品调研，重点关注国内 AI 产品", "sub": "0.1"}
+{"type": "guardrail", "max": 10000, "dangerous": ["send_report"], "sub": "0.2"}
+{"type": "step", "step": 1, "tools": [], "prompt_tokens": 930, "model_ms": 1128, "total_messages": 4, "detail": {"model_output": {"content": "2", "tool_calls": []}, "token_detail": {"prompt": 930, "completion": 75, "cached": 768, "reasoning": 73}}, "sub": "1.1"}
+{"type": "memory_extract", "count": 0, "prefs": [], "ms": 1118}
+{"type": "memory_saved", "added": 0}
+{"type": "final", "used": 1005, "max": 10000, "stop_reason": "model_done", "run_id": "a78c0649", "steps": 1, "answer": "2", "total_ms": 2248}

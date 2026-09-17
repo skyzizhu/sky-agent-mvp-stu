@@ -160,6 +160,7 @@ class ResearchAgent:
             {"role": "user", "content": question},
         ]
         stopped_reason = "model_done"
+        t_run = time.time()
         tool_sequence, errors = [], []
         budget_warned = False
         fail_streak, breaker_trips = 0, 0   # 失败熔断器：连败N次强制改道
@@ -182,6 +183,7 @@ class ResearchAgent:
                 messages.append({"role": "user", "content": WRAP_UP_MSG})
                 self.emit("budget", used=budget.used, max=budget.max)
 
+            t_model = time.time()
             try:
                 msg, usage = call_llm(client, messages, tools=all_tools)
             except Exception as e:
@@ -193,9 +195,26 @@ class ResearchAgent:
                 break
             budget.add(usage)
             messages.append(msg)
+            model_ms = round((time.time() - t_model) * 1000)
+            # 详单：模型的"输入"（本轮消息规模与token明细）与"输出"（决策内容）
+            cached = getattr(getattr(usage, "prompt_tokens_details", None),
+                             "cached_tokens", None)
+            reasoning = getattr(getattr(usage, "completion_tokens_details", None),
+                                "reasoning_tokens", None)
             self.emit("step", step=step,
                       tools=[tc.function.name for tc in (msg.tool_calls or [])],
-                      prompt_tokens=usage.prompt_tokens)
+                      prompt_tokens=usage.prompt_tokens,
+                      model_ms=model_ms, total_messages=len(messages) + 1,
+                      detail={
+                          "model_output": {"content": (msg.content or "")[:500],
+                                           "tool_calls": [
+                                               {"name": tc.function.name,
+                                                "arguments": tc.function.arguments}
+                                               for tc in (msg.tool_calls or [])]},
+                          "token_detail": {"prompt": usage.prompt_tokens,
+                                           "completion": usage.completion_tokens,
+                                           "cached": cached,
+                                           "reasoning": reasoning}})
 
             if not msg.tool_calls:
                 final = msg.content or ""
@@ -207,9 +226,10 @@ class ResearchAgent:
 
             if usage.prompt_tokens > config.MAX_CONTEXT_TOKENS:
                 before = len(json.dumps(messages, ensure_ascii=False, default=str))
-                messages, _ = compact_messages(client, messages)
+                messages, summary, cstats = compact_messages(client, messages)
                 after = len(json.dumps(messages, ensure_ascii=False, default=str))
-                self.emit("compact", before=before, after=after)
+                self.emit("compact", before=before, after=after, stats=cstats,
+                          summary=summary)
 
             for tc in msg.tool_calls:
                 tool_sequence.append(tc.function.name)
@@ -227,6 +247,7 @@ class ResearchAgent:
                                      "content": receipt})
                     continue
 
+                t_tool = time.time()
                 try:
                     owner = next((c for c in self.mcp_clients
                                   if c.owns(tc.function.name)), None)
@@ -236,13 +257,15 @@ class ResearchAgent:
                 except Exception as e:
                     result = f"工具执行异常({type(e).__name__})：{e}"
                     errors.append(f"{tc.function.name}: {e}")
+                tool_ms = round((time.time() - t_tool) * 1000)
                 if isinstance(result, str) and result.startswith("错误"):
                     fail_streak += 1
                     errors.append(f"{tc.function.name} 连续失败(第{fail_streak}次)")
                 else:
                     fail_streak = 0
                 self.emit("tool_result", name=tc.function.name,
-                          result=str(result)[:200])
+                          result=str(result)[:200], full_result=str(result)[:4000],
+                          args=args, tool_ms=tool_ms)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": result})
             # ★ 熔断指令必须在全部 tool 结果回填之后再注入——
@@ -261,10 +284,12 @@ class ResearchAgent:
         if stopped_reason in ("budget_exhausted", "max_steps",
                               "user_stop", "error") and not final:
             messages.append({"role": "user", "content": FORCED_FINAL_MSG})
+            t_fin = time.time()
             try:
                 fmsg, fusage = call_llm(client, messages)  # 不带 tools，杜绝再点菜
                 budget.add(fusage)
                 final = fmsg.content or final
+                self.emit("forced_final", ms=round((time.time() - t_fin) * 1000))
             except Exception as e:
                 errors.append(f"forced_final: {e}")
                 final = final or "（预算耗尽且结题失败，未获取到有效结论）"
@@ -273,8 +298,10 @@ class ResearchAgent:
         transcript = "\n".join(
             f"[{m['role']}] {m.get('content') or ''}"
             for m in messages if isinstance(m, dict))
+        t_mem = time.time()
         new_prefs = extract_preferences(client, transcript)
-        self.emit("memory_extract", count=len(new_prefs), prefs=new_prefs)
+        self.emit("memory_extract", count=len(new_prefs), prefs=new_prefs,
+                  ms=round((time.time() - t_mem) * 1000))
         added = memory.merge(new_prefs)
         self.emit("memory_saved", added=added)
 
@@ -284,7 +311,8 @@ class ResearchAgent:
                       errors=errors, extra={"new_preferences": added})
         self.emit("final", used=budget.used, max=budget.max,
                   stop_reason=stopped_reason, run_id=rec["run_id"],
-                  steps=step, answer=final)
+                  steps=step, answer=final,
+                  total_ms=round((time.time() - t_run) * 1000))
 
         return {"answer": final, "stop_reason": stopped_reason,
                 "steps": step, "tokens": budget.used, "errors": errors,

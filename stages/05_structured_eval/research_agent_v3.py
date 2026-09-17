@@ -82,7 +82,7 @@ def research(client, question: str, outline: dict, max_steps: int = 12):
             return msg.content, evidence, messages, usage
 
         if usage.prompt_tokens > config.MAX_CONTEXT_TOKENS:
-            messages, _ = compact_messages(client, messages)
+            messages, _, _ = compact_messages(client, messages)
 
         for tc in msg.tool_calls:
             args = json.loads(tc.function.arguments)

@@ -56,11 +56,12 @@ def _as_dict(m):
 
 
 def compact_messages(client, messages: list,
-                     keep_recent: int = None) -> tuple[list, str]:
+                     keep_recent: int = None) -> tuple[list, str, dict]:
     """
-    压缩历史。输入完整 messages，输出 (新messages, 摘要文本)。
+    压缩历史。输入完整 messages，输出 (新messages, 摘要文本, 统计stats)。
 
-    结构: [system] + [user: 历史摘要] + [assistant: 确认] + [最近N条原文]
+    结构: [system] + [user: 历史摘要] + [最近N条原文]
+    stats 供 GUI 下钻展示：压缩了什么、怎么压的、效果如何。
     """
     messages = [_as_dict(m) for m in messages]  # 先全部规范化为 dict
     keep_recent = keep_recent or config.COMPACT_KEEP_RECENT
@@ -91,12 +92,17 @@ def compact_messages(client, messages: list,
     # 消息都带 reasoning_content，人造消息没有它会被 API 400 拒收。
     new_messages.append({"role": "user",
                          "content": f"[历史压缩摘要——此前研究进展]\n{summary}\n\n请基于以上进展继续研究。"})
+    stats = {"old_messages": len(old), "kept_recent": len(recent),
+             "summary_chars": len(summary),
+             "total_before": len(messages), "total_after": len(new_messages),
+             "method": "LLM摘要(保留目标/发现/待办/约束) + 最近原文保留",
+             "purpose": "对抗context rot与token成本：旧历史有损压缩，事实由笔记兜底"}
     new_messages.extend(recent)
-    return new_messages, summary
+    return new_messages, summary, stats
 
 
-def maybe_compact(client, messages: list, prompt_tokens: int) -> tuple[list, str | None]:
+def maybe_compact(client, messages: list, prompt_tokens: int) -> tuple[list, str | None, dict | None]:
     """agent loop 每轮调用后检查：输入token超阈值就压缩，没超就原样返回。"""
     if prompt_tokens > config.MAX_CONTEXT_TOKENS:
         return compact_messages(client, messages)
-    return messages, None
+    return messages, None, None

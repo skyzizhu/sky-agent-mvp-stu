@@ -50,6 +50,17 @@
             overflow:auto; margin-top:8px; display:none; }
   .placeholder { color:var(--dim); font-size:12px; text-align:center; padding:30px 0; }
   .hint { font-size:11px; color:var(--dim); margin-top:6px; }
+  details.ev { cursor:pointer; }
+  details.ev summary { list-style:none; }
+  details.ev summary::-webkit-details-marker { display:none; }
+  details.ev summary::after { content:" ▸ 展开详情"; color:var(--acc); font-size:11px; }
+  details.ev[open] summary::after { content:" ▴ 收起"; }
+  details .dx { margin-top:7px; border-top:1px dashed var(--line); padding-top:7px;
+                font-size:11.5px; color:#414a60; }
+  details .dx b { color:var(--dim); }
+  details .dx pre { background:var(--input); border-radius:6px; padding:6px 8px;
+                    margin:4px 0; white-space:pre-wrap; word-break:break-all;
+                    font:11px/1.5 ui-monospace,Monaco,monospace; max-height:220px; overflow:auto; }
 </style>
 </head>
 <body>
@@ -124,13 +135,23 @@ function loadHistory(){
 }
 loadHistory();
 
-function addEv(cls, html){
+function addEv(cls, html, detailsHtml){
   const div = document.createElement('div');
-  div.className = 'ev ' + cls;
-  div.innerHTML = html;
-  $('timeline').appendChild(div);
-  div.scrollIntoView({block:'nearest'});
+  if (detailsHtml) {
+    div.className = 'ev ' + cls;
+    div.innerHTML = `<summary>${html}</summary><div class="dx">${detailsHtml}</div>`;
+    const d = document.createElement('details');
+    d.className = div.className; d.innerHTML = div.innerHTML;
+    $('timeline').appendChild(d);
+    d.scrollIntoView({block:'nearest'});
+  } else {
+    div.className = 'ev ' + cls;
+    div.innerHTML = html;
+    $('timeline').appendChild(div);
+    div.scrollIntoView({block:'nearest'});
+  }
 }
+const msBadge = ms => ms != null ? ` <span class="tt">⏱ ${ms}ms</span>` : '';
 
 async function start(){
   const q = $('question').value.trim();
@@ -153,17 +174,45 @@ function listen(){
         addEv('', `🧠 载入 <b>${ev.count}</b> 条长期偏好`); break;
       case 'guardrail':
         addEv('', `🛡️ 预算 <b>${ev.max.toLocaleString()}</b> tok`); break;
-      case 'step':
-        addEv('', `<span class="tt">第${ev.step}步</span>` +
+      case 'step': {
+        const d = ev.detail || {};
+        const oc = d.model_output || {};
+        const td = d.token_detail || {};
+        const summary = `<span class="tt">第${ev.step}步</span>` +
           (ev.tools.length ? `🔧 点菜: <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
-          ` <span class="tt">输入${ev.prompt_tokens}tok</span>`);
+          ` <span class="tt">输入${ev.prompt_tokens}tok</span>` + msBadge(ev.model_ms);
+        const detail =
+          `<b>本轮输入</b>：消息总数 ${ev.total_messages} 条（全量重发给模型）<br>` +
+          `<b>模型输出</b>：<pre>${(oc.content || '（无文本，仅点菜）').replace(/</g,'&lt;')}</pre>` +
+          (oc.tool_calls && oc.tool_calls.length ?
+           `<b>点菜单</b>：<pre>${JSON.stringify(oc.tool_calls, null, 1)}</pre>` : '') +
+          `<b>token明细</b>：输入 ${td.prompt ?? '?'} / 输出 ${td.completion ?? '?'} / ` +
+          `思考 ${td.reasoning ?? 0} / 缓存命中 ${td.cached ?? 0}`;
+        addEv('', summary, detail);
         $('budget_fill').style.width =
           Math.min(100, Math.round(ev.prompt_tokens / 60000 * 100)) + '%';
         break;
+      }
       case 'tool_result':
-        addEv('tool', `📋 ${ev.name} → ${String(ev.result).slice(0,160)}`); break;
-      case 'compact':
-        addEv('compact', `★ 上下文压缩：${ev.before} → ${ev.after} 字符（旧历史已摘要）`); break;
+        addEv('tool',
+          `📋 ${ev.name} → ${String(ev.result).slice(0,120)}` + msBadge(ev.tool_ms),
+          `<b>输入参数</b>：<pre>${JSON.stringify(ev.args, null, 1)}</pre>` +
+          `<b>完整输出（前4000字符）</b>：<pre>${String(ev.full_result || ev.result).replace(/</g,'&lt;')}</pre>`);
+        break;
+      case 'compact': {
+        const st = ev.stats || {};
+        addEv('compact',
+          `★ 上下文压缩：${ev.before} → ${ev.after} 字符（旧 ${st.old_messages??'?'} 条摘要化，保留最近 ${st.kept_recent??'?'} 条）`,
+          `<b>压缩目的</b>：对抗 context rot 与 token 成本——上下文越长，模型对早期信息的召回越差，且每轮都为全部历史付全价。` +
+          `事实已由笔记兜底，旧历史可以放心摘要化。<br>` +
+          `<b>压缩方法</b>：${st.method || 'LLM摘要 + 最近原文保留'}。具体动作：把 ${st.old_messages??'?'} 条旧消息` +
+          `（含旧工具结果）交给模型压缩成保留四类信息的摘要（任务目标/关键发现/未完成事项/约束条件），` +
+          `重建为 [system + 摘要 + 最近 ${st.kept_recent??'?'} 条原文]。<br>` +
+          `<b>压缩效果</b>：摘要 ${st.summary_chars??'?'} 字符替代了 ${st.old_messages??'?'} 条消息；` +
+          `总长度 ${st.total_before??'?'} → ${st.total_after??'?'} 字符。<br>` +
+          `<b>本次摘要全文</b>：<pre>${(ev.summary||'').replace(/</g,'&lt;')}</pre>`);
+        break;
+      }
       case 'budget':
         addEv('budget', `⚠️ ${ev.note || '预算接近上限，注入收尾指令'}（${ev.used}/${ev.max}）`); break;
       case 'approval_request':

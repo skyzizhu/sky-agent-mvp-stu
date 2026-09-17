@@ -75,7 +75,7 @@ def run_sub_agent(client, brief: dict, worker_id: str, max_steps: int = 10,
             break
 
         if usage.prompt_tokens > config.MAX_CONTEXT_TOKENS:
-            messages, _ = compact_messages(client, messages)
+            messages, _, _ = compact_messages(client, messages)
 
         for tc in msg.tool_calls:
             args = json.loads(tc.function.arguments)

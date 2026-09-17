@@ -74,7 +74,7 @@ def main():
         if usage.prompt_tokens > config.MAX_CONTEXT_TOKENS:
             from common.context import compact_messages
             before = len(json.dumps(messages, ensure_ascii=False, default=str))
-            messages, summary = compact_messages(client, messages)
+            messages, summary, _ = compact_messages(client, messages)
             after = len(json.dumps(messages, ensure_ascii=False, default=str))
             stats["compactions"] += 1
             print(f"\n   ★ 第{stats['compactions']}次压缩: 上下文 {before}→{after} 字符"

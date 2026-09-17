@@ -64,6 +64,9 @@
   .md blockquote { border-left:3px solid var(--line); margin:.5em 0; padding:2px 12px;
                    color:var(--dim); }
   .hint { font-size:11px; color:var(--dim); margin-top:6px; }
+  button.tier { background:#fff; color:var(--dim); border:1px solid var(--line);
+                padding:5px 12px; font-size:12px; border-radius:99px; }
+  button.tier.sel { background:var(--acc); color:#fff; border-color:var(--acc); }
   details.ev { cursor:pointer; }
   details.ev summary { list-style:none; }
   details.ev summary::-webkit-details-marker { display:none; }
@@ -104,6 +107,11 @@
   <!-- 右：工作区 -->
   <div>
     <div class="panel">
+      <div class="btnrow" style="margin:0 0 8px" id="tiers">
+        <button class="tier sel" data-t="quick">⚡ 快问 · 1万 tok</button>
+        <button class="tier sel" data-t="standard">📊 标准 · 3万 tok</button>
+        <button class="tier sel" data-t="deep">🔍 深度 · 10万 tok</button>
+      </div>
       <textarea id="question" placeholder="输入研究问题，如：对比 Coze 和 Dify 的收费模式"></textarea>
       <div class="btnrow">
         <button id="start" onclick="start()">🚀 开始研究</button>
@@ -137,9 +145,15 @@
 const $ = id => document.getElementById(id);
 let runId = null, es = null;
 
+let TIERS = {quick:10000, standard:30000, deep:100000};
 fetch('/api/config').then(r=>r.json()).then(c=>{
   $('model').textContent = '模型: ' + c.model;
-  $('budget_text').textContent = c.budget.toLocaleString() + ' tok';
+  if (c.tiers) TIERS = c.tiers;
+  $('budget_text').textContent = Number(TIERS.standard).toLocaleString() + ' tok';
+  document.querySelectorAll('#tiers .tier').forEach(b => {
+    if (TIERS[b.dataset.t]) b.textContent =
+      b.textContent.replace(/· .*$/, '· ' + Number(TIERS[b.dataset.t]).toLocaleString() + ' tok');
+  });
 });
 
 function loadHistory(){
@@ -204,6 +218,17 @@ function addSub(sub, html, detailsHtml, cls){
   return li;
 }
 
+let tier = 'standard';
+document.querySelectorAll('#tiers .tier').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#tiers .tier').forEach(x => x.classList.remove('sel'));
+    b.classList.add('sel');
+    tier = b.dataset.t;
+    $('budget_text').textContent = Number(TIERS[tier] || 30000).toLocaleString() + ' tok';
+    $('budget_fill').style.width = '0%';
+  };
+});
+
 async function start(){
   const q = $('question').value.trim();
   if (!q) { alert('先输入研究问题'); return; }
@@ -211,7 +236,8 @@ async function start(){
   $('timeline').innerHTML = '';
   $('report_panel').style.display = 'none';   // 没有报告时不显示报告视图
   const r = await fetch('/api/research', {method:'POST',
-    headers:{'Content-Type':'application/json'}, body: JSON.stringify({question:q})});
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({question:q, tier})});
   const d = await r.json();
   runId = d.run_id;
   listen();

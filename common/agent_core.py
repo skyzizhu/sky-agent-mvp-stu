@@ -104,7 +104,9 @@ class ResearchAgent:
         self.emit = emit or _cli_emit
         self.approver = approver or _cli_approver
         self.stop_check = stop_check or (lambda: False)
-        self.budget_max = budget_max or (3000 if os.getenv("LOW_BUDGET") else 60000)
+        self.budget_max = budget_max or (
+            3000 if os.getenv("LOW_BUDGET")
+            else config.BUDGET_TIERS.get(config.DEFAULT_BUDGET_TIER, 30000))
         self.use_mcp = use_mcp
         self.impl = impl
         self.stop_reason = "model_done"

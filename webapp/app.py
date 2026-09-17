@@ -97,20 +97,27 @@ def index():
 
 @app.get("/api/config")
 def get_config():
-    budget = 3000 if os.getenv("LOW_BUDGET") else 60000
+    budget = (3000 if os.getenv("LOW_BUDGET")
+              else config.BUDGET_TIERS["standard"])
     return {"model": config.MODEL, "budget": budget,
+            "tiers": config.BUDGET_TIERS,
             "mcp_available": os.getenv("MCP_FS") == "1"}
 
 
 class ResearchIn(BaseModel):
     question: str
+    tier: str = "standard"   # quick / standard / deep
 
 
 @app.post("/api/research")
 def start_research(body: ResearchIn):
     run_id = uuid.uuid4().hex[:8]
+    budget_max = (3000 if os.getenv("LOW_BUDGET")
+                  else config.BUDGET_TIERS.get(body.tier,
+                       config.BUDGET_TIERS["standard"]))
     agent = ResearchAgentWeb(run_id, impl="webapp",
-                             use_mcp=os.getenv("MCP_FS") == "1")
+                             use_mcp=os.getenv("MCP_FS") == "1",
+                             budget_max=budget_max)
     t = threading.Thread(target=agent.run, args=(body.question,), daemon=True)
     RUNS[run_id] = {"agent": agent, "thread": t, "question": body.question}
     agent._thread = t  # SSE 生成器通过它判断运行是否结束

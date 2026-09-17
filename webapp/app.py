@@ -19,6 +19,8 @@ sys.path.insert(0, str(ROOT))
 
 import config
 from common.agent_core import ResearchAgent
+
+EV_DIR = ROOT / "logs" / "events"          # 每次运行的事件存档（可回放）
 from common.guardrails import DANGEROUS_TOOLS
 from common.observability import load_runs
 from fastapi import FastAPI
@@ -29,15 +31,18 @@ app = FastAPI(title="Agent Research Workbench")
 
 # 运行注册表：run_id -> {"agent", "thread", "question"}
 RUNS = {}
+EV_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ResearchAgentWeb(ResearchAgent):
-    """Web 注入实现：emit 推进队列（SSE 读走），approver 等网页按钮，stop 查按钮。"""
+    """Web 注入实现：emit 推进队列（SSE 读走）+ 事件落盘（历史回放），
+    approver 等网页按钮，stop 查按钮。"""
 
-    def __init__(self, run_id: str, **kw):
+    def __init__(self, run_id: str, events_path=None, **kw):
         super().__init__(emit=self._push, approver=self._web_approver,
                          stop_check=lambda: self._stop.is_set(), **kw)
         self.run_id = run_id
+        self._events_path = Path(events_path) if events_path else None
         self._stop = threading.Event()
         self._queue = []                      # 事件队列（SSE 消费）
         self._cond = threading.Condition()
@@ -49,6 +54,15 @@ class ResearchAgentWeb(ResearchAgent):
         with self._cond:
             self._queue.append({"type": type, **p})
             self._cond.notify_all()
+        # 事件落盘：历史详情页的数据源（与队列内容一致）
+        if self._events_path:
+            try:
+                self._events_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self._events_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"type": type, **p},
+                                       ensure_ascii=False, default=str) + "\n")
+            except Exception:
+                pass
 
     def events_since(self, idx: int) -> list:
         with self._cond:
@@ -117,7 +131,8 @@ def start_research(body: ResearchIn):
                        config.BUDGET_TIERS["standard"]))
     agent = ResearchAgentWeb(run_id, impl="webapp",
                              use_mcp=os.getenv("MCP_FS") == "1",
-                             budget_max=budget_max)
+                             budget_max=budget_max,
+                             events_path=EV_DIR / f"events_{run_id}.jsonl")
     t = threading.Thread(target=agent.run, args=(body.question,), daemon=True)
     RUNS[run_id] = {"agent": agent, "thread": t, "question": body.question}
     agent._thread = t  # SSE 生成器通过它判断运行是否结束
@@ -165,6 +180,23 @@ def stop(run_id: str):
         return JSONResponse({"error": "run not found"}, status_code=404)
     RUNS[run_id]["agent"].stop()
     return {"ok": True}
+
+
+@app.get("/api/runs/{run_id}/events")
+def run_events(run_id: str):
+    """历史运行的事件回放数据（含 final 事件里的报告全文）。"""
+    p = EV_DIR / f"events_{run_id}.jsonl"
+    if not p.exists():
+        return {"events": []}
+    events = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return {"events": events}
 
 
 @app.get("/api/runs")

@@ -46,3 +46,10 @@
 - 验证: quick 档 final.max=10000 ✓
 - 依据: 60k 一刀切会腰斩合法深度任务（85-108k），对简单任务又虚高；
   分档 = 把"成本 vs 完整度"权衡交还用户（Anthropic effort scaling 思路）
+
+## 历史详情回放（2026-09-17 追加）
+- 事件落盘 logs/events_{run_id}.jsonl（emit 时同步写，与SSE队列同源）
+- /api/runs/{id}/events 回放接口；前端 renderEvent 统一渲染器
+  （实时 SSE 与历史回放共用，live 参数控制审批按钮态）
+- 左栏历史条目点击 → 加载回放 + 选中高亮；旧运行无存档时显示提示
+- 验证：新运行 17 事件存档/回放/含 final 报告 ✓；旧运行降级提示 ✓

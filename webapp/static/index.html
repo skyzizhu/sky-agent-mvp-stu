@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Agent 研究工作台</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --line:#e3e6ec; --txt:#1c2333;
+          --dim:#69718a; --acc:#2563eb; --ok:#188554; --err:#c93c37;
+          --warn:#9a6700; --input:#f2f4f8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.6 -apple-system,"PingFang SC",sans-serif; }
+  header { padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:14px; }
+  h1 { font-size:16px; margin:0; }
+  .gauge { margin-left:auto; font-size:12px; color:var(--dim); }
+  .gauge .track { display:inline-block; width:120px; height:8px; background:var(--input);
+                  border-radius:99px; overflow:hidden; vertical-align:middle; margin:0 6px; }
+  .gauge .fill { display:block; height:100%; background:var(--acc); width:0%; transition:width .4s; }
+  main { display:grid; grid-template-columns:250px 1fr; gap:14px; padding:14px 20px; }
+  @media (max-width:900px){ main { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  h2 { font-size:12px; color:var(--dim); margin:0 0 8px; text-transform:uppercase; letter-spacing:.4px; }
+  .run-item { font-size:12px; padding:7px 9px; border:1px solid var(--line); border-radius:7px;
+              margin-bottom:6px; cursor:pointer; }
+  .run-item:hover { border-color:var(--acc); }
+  .run-item .st { float:right; }
+  textarea { width:100%; min-height:64px; background:var(--input); color:var(--txt);
+             border:1px solid var(--line); border-radius:8px; padding:9px;
+             font:13px/1.5 inherit; resize:vertical; }
+  .btnrow { display:flex; gap:8px; margin:10px 0 4px; }
+  button { border:none; border-radius:7px; padding:8px 16px; cursor:pointer;
+           font-size:13px; color:#fff; background:var(--acc); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.ghost { background:#fff; color:var(--err); border:1px solid var(--line); }
+  #timeline { margin-top:6px; }
+  .ev { border:1px solid var(--line); border-left:3px solid var(--acc); border-radius:8px;
+        padding:7px 11px; margin:7px 0; font-size:12.5px; background:#fbfcfe; }
+  .ev .tt { color:var(--dim); font-size:11px; margin-right:8px; }
+  .ev.tool { border-left-color:#188554; }
+  .ev.compact { border-left-color:#9a6700; background:#fffaf0; }
+  .ev.budget { border-left-color:#9a6700; background:#fffaf0; }
+  .ev.approval { border-left-color:#c93c37; background:#fdf1f0; }
+  .ev.final { border-left-color:#188554; background:#f2faf5; }
+  .approval .btns { margin-top:6px; display:flex; gap:8px; }
+  .approval .yes { background:var(--ok); }
+  .approval .no { background:var(--err); }
+  .report { background:#fbfbfc; border:1px solid var(--line); border-radius:8px;
+            padding:12px; white-space:pre-wrap; font-size:13.5px; max-height:60vh;
+            overflow:auto; margin-top:8px; display:none; }
+  .placeholder { color:var(--dim); font-size:12px; text-align:center; padding:30px 0; }
+  .hint { font-size:11px; color:var(--dim); margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔬 Agent 研究工作台</h1>
+  <span style="color:var(--dim);font-size:12px" id="model"></span>
+  <div class="gauge">预算 <span id="budget_text">-</span>
+    <span class="track"><span class="fill" id="budget_fill"></span></span>
+  </div>
+</header>
+
+<main>
+  <!-- 左：运行历史 -->
+  <div class="panel">
+    <h2>运行历史</h2>
+    <div id="history"><div class="placeholder">暂无运行</div></div>
+  </div>
+
+  <!-- 右：工作区 -->
+  <div>
+    <div class="panel">
+      <textarea id="question" placeholder="输入研究问题，如：对比 Coze 和 Dify 的收费模式"></textarea>
+      <div class="btnrow">
+        <button id="start" onclick="start()">🚀 开始研究</button>
+        <button id="stopbtn" class="ghost" onclick="stopRun()" disabled>⏹ 中止</button>
+      </div>
+      <div class="hint">含"把报告发给某人邮箱"的问题会触发危险操作确认；写类工具同样需要批准。</div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>执行流（实时）</h2>
+      <div id="timeline"><div class="placeholder">等待运行…</div></div>
+      <div class="approval" id="approval" style="display:none">
+        <div class="ev approval">
+          <b>⚠️ 需要人工确认</b> —— <span id="approval_text"></span>
+          <div class="btns">
+            <button class="yes" onclick="respond(true)">✅ 批准执行</button>
+            <button class="no" onclick="respond(false)">❌ 拒绝</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>最终报告</h2>
+      <div class="report" id="report">（报告将在这里出现，带 [n](url) 引用）</div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let runId = null, es = null;
+
+fetch('/api/config').then(r=>r.json()).then(c=>{
+  $('model').textContent = '模型: ' + c.model;
+  $('budget_text').textContent = c.budget.toLocaleString() + ' tok';
+});
+
+function loadHistory(){
+  fetch('/api/runs').then(r=>r.json()).then(d=>{
+    if (!d.runs.length) return;
+    $('history').innerHTML = d.runs.slice(0,15).map(r=>`
+      <div class="run-item" title="${(r.question||'').replace(/"/g,'')}">
+        <span class="st ${r.stop_reason==='model_done'?'':'st-warn'}"
+              style="color:${r.stop_reason==='model_done'?'#188554':'#9a6700'}">
+          ${r.stop_reason==='model_done'?'✓':'⏹'}</span>
+        ${(r.question||'').slice(0,26)}…<br>
+        <span style="color:var(--dim)">${r.ts.slice(5,16)} · ${(r.tokens||0).toLocaleString()} tok</span>
+      </div>`).join('');
+  });
+}
+loadHistory();
+
+function addEv(cls, html){
+  const div = document.createElement('div');
+  div.className = 'ev ' + cls;
+  div.innerHTML = html;
+  $('timeline').appendChild(div);
+  div.scrollIntoView({block:'nearest'});
+}
+
+async function start(){
+  const q = $('question').value.trim();
+  if (!q) { alert('先输入研究问题'); return; }
+  $('start').disabled = true; $('stopbtn').disabled = false;
+  $('timeline').innerHTML = ''; $('report').style.display = 'none';
+  const r = await fetch('/api/research', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({question:q})});
+  const d = await r.json();
+  runId = d.run_id;
+  listen();
+}
+
+function listen(){
+  es = new EventSource(`/api/research/${runId}/events`);
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    switch(ev.type){
+      case 'memory_inject':
+        addEv('', `🧠 载入 <b>${ev.count}</b> 条长期偏好`); break;
+      case 'guardrail':
+        addEv('', `🛡️ 预算 <b>${ev.max.toLocaleString()}</b> tok`); break;
+      case 'step':
+        addEv('', `<span class="tt">第${ev.step}步</span>` +
+          (ev.tools.length ? `🔧 点菜: <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
+          ` <span class="tt">输入${ev.prompt_tokens}tok</span>`);
+        $('budget_fill').style.width =
+          Math.min(100, Math.round(ev.prompt_tokens / 60000 * 100)) + '%';
+        break;
+      case 'tool_result':
+        addEv('tool', `📋 ${ev.name} → ${String(ev.result).slice(0,160)}`); break;
+      case 'compact':
+        addEv('compact', `★ 上下文压缩：${ev.before} → ${ev.after} 字符（旧历史已摘要）`); break;
+      case 'budget':
+        addEv('budget', `⚠️ ${ev.note || '预算接近上限，注入收尾指令'}（${ev.used}/${ev.max}）`); break;
+      case 'approval_request':
+        $('approval').style.display = '';
+        $('approval_text').textContent =
+          `${ev.tool}(${ev.args.slice(0,80)}) —— ${ev.reason}`; break;
+      case 'approval_result':
+        $('approval').style.display = 'none';
+        addEv(ev.approved ? 'tool' : 'approval',
+          `${ev.approved ? '✅ 已批准' : '❌ 已拒绝'}：${ev.tool}`); break;
+      case 'final':
+        $('budget_text').textContent = ev.used.toLocaleString() + ' tok';
+        $('budget_fill').style.width =
+          Math.min(100, Math.round(ev.used / ev.max * 100)) + '%';
+        addEv('final', `🏁 研究完成（${ev.steps} 步 · ${ev.used.toLocaleString()} tok · ${ev.stop_reason}）`);
+        if (ev.answer) {
+          $('report').textContent = ev.answer;
+          $('report').style.display = 'block';
+        }
+        break;
+      case 'done':
+        es.close(); $('start').disabled = false; $('stopbtn').disabled = true;
+        loadHistory(); break;
+    }
+  };
+  es.onerror = () => { es.close(); };
+}
+
+async function stopRun(){
+  if (!runId) return;
+  await fetch(`/api/research/${runId}/stop`, {method:'POST'});
+}
+async function respond(approved){
+  await fetch(`/api/research/${runId}/approve`, {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({approved})});
+  $('approval').style.display = 'none';
+}
+</script>
+</body>
+</html>

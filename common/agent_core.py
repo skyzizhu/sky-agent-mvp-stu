@@ -362,6 +362,14 @@ class ResearchAgent:
                 self.emit("forced_final", ms=round((time.time() - t_fin) * 1000))
             except Exception as e:
                 errors.append(f"forced_final: {e}")
+            # 最后兜底：结题调用失败时，把笔记原文作为报告输出（信息不能跟着丢）
+            if not final:
+                notes_p = tools_mod._current_notes_file()
+                if notes_p and Path(notes_p).exists():
+                    notes_text = Path(notes_p).read_text(encoding="utf-8")
+                    if notes_text.strip():
+                        final = ("【预算耗尽，自动结题】以下为调研笔记原文"
+                                 "（未经整理，数据可信但格式粗糙）：\n\n" + notes_text[:4000])
                 final = final or "（预算耗尽且结题失败，未获取到有效结论）"
 
         # 会话结束：记忆提取 + 运行日志

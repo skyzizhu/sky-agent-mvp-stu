@@ -306,8 +306,9 @@ FETCH_JS_TOOL = [{
     "function": {
         "name": "fetch_js",
         "description": "渲染页面JavaScript后提取全部可见文本（含页脚定价等）。"
-                       "当 fetch_url 返回的内容明显过少、或怀疑信息由JS动态渲染时使用。"
-                       "比 fetch_url 慢数秒，不要作为首选。",
+                       "两个使用时机：① fetch_url 返回的内容明显过少时，优先用本工具重新抓取【同一个网址】"
+                       "（很多页面正文由JS动态渲染，静态抓取只有壳）；② 怀疑信息由JS动态渲染时。"
+                       "比 fetch_url 慢数秒。",
         "parameters": {
             "type": "object",
             "properties": {

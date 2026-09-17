@@ -49,6 +49,20 @@
             padding:12px; white-space:pre-wrap; font-size:13.5px; max-height:60vh;
             overflow:auto; margin-top:8px; display:none; }
   .placeholder { color:var(--dim); font-size:12px; text-align:center; padding:30px 0; }
+  .md h1, .md h2, .md h3 { margin:.6em 0 .35em; line-height:1.35; }
+  .md h1 { font-size:17px; } .md h2 { font-size:15.5px; } .md h3 { font-size:14px; }
+  .md p { margin:.45em 0; }
+  .md table { border-collapse:collapse; margin:.5em 0; width:100%; font-size:12.5px; }
+  .md th, .md td { border:1px solid var(--line); padding:5px 9px; text-align:left; }
+  .md th { background:var(--input); }
+  .md code { background:var(--input); border-radius:4px; padding:1px 5px;
+             font:12px ui-monospace,Monaco,monospace; }
+  .md pre { background:var(--input); border-radius:6px; padding:9px; overflow:auto; }
+  .md pre code { background:none; padding:0; }
+  .md a { color:var(--acc); }
+  .md ul, .md ol { margin:.4em 0; padding-left:1.4em; }
+  .md blockquote { border-left:3px solid var(--line); margin:.5em 0; padding:2px 12px;
+                   color:var(--dim); }
   .hint { font-size:11px; color:var(--dim); margin-top:6px; }
   details.ev { cursor:pointer; }
   details.ev summary { list-style:none; }
@@ -71,6 +85,7 @@
 </style>
 </head>
 <body>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <header>
   <h1>🔬 Agent 研究工作台</h1>
   <span style="color:var(--dim);font-size:12px" id="model"></span>
@@ -111,9 +126,9 @@
       </div>
     </div>
 
-    <div class="panel" style="margin-top:14px">
+    <div class="panel" style="margin-top:14px;display:none" id="report_panel">
       <h2>最终报告</h2>
-      <div class="report" id="report">（报告将在这里出现，带 [n](url) 引用）</div>
+      <div class="report md" id="report"></div>
     </div>
   </div>
 </main>
@@ -193,7 +208,8 @@ async function start(){
   const q = $('question').value.trim();
   if (!q) { alert('先输入研究问题'); return; }
   $('start').disabled = true; $('stopbtn').disabled = false;
-  $('timeline').innerHTML = ''; $('report').style.display = 'none';
+  $('timeline').innerHTML = '';
+  $('report_panel').style.display = 'none';   // 没有报告时不显示报告视图
   const r = await fetch('/api/research', {method:'POST',
     headers:{'Content-Type':'application/json'}, body: JSON.stringify({question:q})});
   const d = await r.json();
@@ -295,8 +311,15 @@ function listen(){
         addSub(`R`, `🏁 研究完成（${ev.steps} 步 · ${ev.used.toLocaleString()} tok · ${ev.stop_reason}` +
           `${ev.total_ms!=null ? ' · 总耗时 '+(ev.total_ms/1000).toFixed(1)+'s' : ''}）`);
         if (ev.answer) {
-          $('report').textContent = ev.answer;
-          $('report').style.display = 'block';
+          const safe = esc(ev.answer);   // 先转义HTML防注入，再按 Markdown 渲染
+          if (typeof marked !== 'undefined') {
+            $('report').innerHTML = marked.parse(safe);
+            $('report').querySelectorAll('a').forEach(a => a.target = '_blank');
+          } else {
+            $('report').textContent = safe + '\n\n（Markdown 渲染库未加载，以上为原文）';
+          }
+          $('report_panel').style.display = '';
+          $('report_panel').scrollIntoView({block:'start'});
         }
         break;
       case 'done':

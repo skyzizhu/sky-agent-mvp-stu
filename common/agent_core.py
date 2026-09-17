@@ -48,6 +48,10 @@ def _cli_emit(type: str, **p):
         print(f"   ★ 压缩: 上下文 {p['before']}→{p['after']} 字符")
     elif type == "budget":
         print(f"   [护栏] 预算接近上限({p['used']}/{p['max']})，注入收尾指令")
+    elif type == "breaker":
+        print(f"   [熔断] {p['note']}")
+    elif type == "error":
+        print(f"   [错误] {p['message']}")
     elif type == "memory_extract":
         print(f"[记忆] 提取到 {p['count']} 条候选: {p['prefs']}")
     elif type == "memory_saved":
@@ -81,6 +85,15 @@ SEND_TOOL = [{
         },
     },
 }]
+
+
+CIRCUIT_BREAKER_MSG = ("⚠️ 工具已连续失败多次。禁止再用相同方式尝试，"
+                       "立即基于【已有信息】输出阶段性结论（如实标注未获取到的部分），"
+                       "不要浪费剩余预算继续尝试。")
+
+FORCED_FINAL_MSG = ("预算已用尽，立即结束调研。请输出《阶段性结题报告》："
+                    "1) 已确认的发现（带来源域名）；2) 未能获取的信息；3) 一句话结论。"
+                    "不要再调用任何工具。")
 
 
 class ResearchAgent:
@@ -149,6 +162,7 @@ class ResearchAgent:
         stopped_reason = "model_done"
         tool_sequence, errors = [], []
         budget_warned = False
+        fail_streak, breaker_trips = 0, 0   # 失败熔断器：连败N次强制改道
         step = 0
         final = ""
 
@@ -168,7 +182,15 @@ class ResearchAgent:
                 messages.append({"role": "user", "content": WRAP_UP_MSG})
                 self.emit("budget", used=budget.used, max=budget.max)
 
-            msg, usage = call_llm(client, messages, tools=all_tools)
+            try:
+                msg, usage = call_llm(client, messages, tools=all_tools)
+            except Exception as e:
+                # 协议层报错（如 400 配对错误）不应炸掉整个 run：
+                # 记录错误、置错误停止原因，交给循环外的强制结题兜底
+                errors.append(f"call_llm: {type(e).__name__}: {str(e)[:200]}")
+                self.emit("error", message=str(e)[:200])
+                stopped_reason = "error"
+                break
             budget.add(usage)
             messages.append(msg)
             self.emit("step", step=step,
@@ -214,13 +236,38 @@ class ResearchAgent:
                 except Exception as e:
                     result = f"工具执行异常({type(e).__name__})：{e}"
                     errors.append(f"{tc.function.name}: {e}")
+                if isinstance(result, str) and result.startswith("错误"):
+                    fail_streak += 1
+                    errors.append(f"{tc.function.name} 连续失败(第{fail_streak}次)")
+                else:
+                    fail_streak = 0
                 self.emit("tool_result", name=tc.function.name,
                           result=str(result)[:200])
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": result})
+            # ★ 熔断指令必须在全部 tool 结果回填之后再注入——
+            #   插进 assistant(tool_calls) 与 tool 结果之间会破坏配对 → API 400
+            if fail_streak >= 4 and breaker_trips < 2:
+                breaker_trips += 1
+                fail_streak = 0
+                messages.append({"role": "user", "content": CIRCUIT_BREAKER_MSG})
+                self.emit("breaker", used=budget.used, max=budget.max,
+                          note=f"工具连续失败，已注入熔断指令（第{breaker_trips}次）")
         else:
             final = "（达到最大步数未能完成任务，请缩小问题范围后重试）"
             stopped_reason = "max_steps"
+
+        # ★ 兜底保证：非正常停止时也必须有最终产出（强制无工具结题）
+        if stopped_reason in ("budget_exhausted", "max_steps",
+                              "user_stop", "error") and not final:
+            messages.append({"role": "user", "content": FORCED_FINAL_MSG})
+            try:
+                fmsg, fusage = call_llm(client, messages)  # 不带 tools，杜绝再点菜
+                budget.add(fusage)
+                final = fmsg.content or final
+            except Exception as e:
+                errors.append(f"forced_final: {e}")
+                final = final or "（预算耗尽且结题失败，未获取到有效结论）"
 
         # 会话结束：记忆提取 + 运行日志
         transcript = "\n".join(

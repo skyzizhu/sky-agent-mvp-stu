@@ -26,6 +26,10 @@ MAX_CONTEXT_TOKENS = 4000
 COMPACT_KEEP_RECENT = 6
 
 
+# Stage 11：搜索源配置（可选）。配置 TAVILY_API_KEY 后自动用 Tavily 优先，
+# 未配置则降级为免费 ddgs（DuckDuckGo，限流/超时较多）
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
 # Stage 10/11：MCP 服务器配置
 # 优先级：.env 的 MCP_SERVERS（JSON数组）> 旧开关 MCP_FS=1（默认filesystem）> 不启用
 # 每项格式：{"name": "前缀名", "command": "启动命令", "args": [...]}

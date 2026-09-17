@@ -230,8 +230,20 @@ class ResearchAgent:
                 final = msg.content or ""
                 break
 
-            if budget.exhausted:
-                stopped_reason = "budget_exhausted"
+            # ★ 硬收尾：预算到 95% 或耗尽时"拔掉工具箱"——
+            #   最后一次调用不带 tools 参数，模型物理上无法再点菜，
+            #   只能输出结题报告（软提醒"请求它收尾"实测会被无视，硬拔才有效）
+            if budget.exhausted or budget.near_limit(0.95):
+                messages.append({"role": "user", "content": FORCED_FINAL_MSG})
+                self.emit("budget", used=budget.used, max=budget.max,
+                          note="预算达硬线，移除工具强制结题")
+                try:
+                    fmsg, fusage = call_llm(client, messages)  # ★ 无 tools：不可能再点菜
+                    budget.add(fusage)
+                    final = fmsg.content or final
+                except Exception as e:
+                    errors.append(f"budget_hard_stop: {type(e).__name__}: {str(e)[:150]}")
+                stopped_reason = "budget_hard_stop"
                 break
 
             if usage.prompt_tokens > config.MAX_CONTEXT_TOKENS:
@@ -298,7 +310,7 @@ class ResearchAgent:
             stopped_reason = "max_steps"
 
         # ★ 兜底保证：非正常停止时也必须有最终产出（强制无工具结题）
-        if stopped_reason in ("budget_exhausted", "max_steps",
+        if stopped_reason in ("budget_hard_stop", "budget_exhausted", "max_steps",
                               "user_stop", "error") and not final:
             messages.append({"role": "user", "content": FORCED_FINAL_MSG})
             t_fin = time.time()
@@ -336,9 +348,9 @@ class ResearchAgent:
                 "run_id": rec["run_id"]}
 
     def _setup_mcp(self, spec: dict):
-        from common.mcp_client import MCPClient
-        mcp = MCPClient(spec["name"], spec["command"], spec["args"])
-        mcp.start()
+        # 共享单例：同 server 全项目只连一次（修复每次运行 spawn 新进程的泄漏）
+        from common.mcp_client import get_shared_client
+        mcp = get_shared_client(spec)
         if mcp.error:
             raise RuntimeError(f"MCP server '{spec['name']}' 启动失败: {mcp.error[:300]}")
         return mcp

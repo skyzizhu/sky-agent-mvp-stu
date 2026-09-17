@@ -30,3 +30,11 @@
 - agent_core: _emit_sub 自动编号 step.sub（每步重置）；新增 backfill/inject 颗粒
 - 前端: 步分组 <details> + ul.subs 编号列表；compact 颗粒展开含目的/方法/统计/摘要全文
 - 验证: 0.1→0.2→1.1→1.2→1.3→1.4→2.1… 序列正确
+
+## 第一批优化（2026-09-17）
+1. 搜索源：Tavily 优先 + ddgs 降级（config.TAVILY_API_KEY）
+2. 预算硬收尾：95% 拔工具箱（无 tools 调用强制结题），stop_reason=budget_hard_stop
+   验证：2967/3000 非空结题报告 ✓（对比此前 4563/3000 且无产出）
+3. MCP 生命周期：close()（stop事件→context退出→join→pkill兜底）
+   + get_shared_client 共享单例 + atexit 兜底
+   验证：同实例 ✓ / close 后线程退出 ✓ / 0 残留进程 ✓

@@ -106,21 +106,47 @@ REAL_TOOLS = [
 ]
 
 
+def _tavily_search(query: str) -> list | None:
+    """Tavily 搜索（付费，质量高速度快）。未配 key 返回 None 走降级。"""
+    key = config.TAVILY_API_KEY
+    if not key:
+        return None
+    import httpx as _httpx
+    resp = _httpx.post("https://api.tavily.com/search",
+                       json={"api_key": key, "query": query,
+                             "max_results": 5, "search_depth": "basic"},
+                       timeout=20)
+    resp.raise_for_status()
+    out = []
+    for r in resp.json().get("results", []):
+        out.append({"title": r.get("title", ""), "href": r.get("url", ""),
+                    "body": r.get("content", "")})
+    return out
+
+
 def web_search(query: str) -> str:
     import time as _t
     results = None
     err = ""
-    # 重试+退避：并行子agent会同时打搜索接口，触发限流是常态，必须重试
-    for attempt in range(3):
-        try:
-            from ddgs import DDGS
-            results = list(DDGS().text(query, max_results=5))
-            if results:
-                break
-            err = "无结果"
-        except Exception as e:
-            err = str(e)
-        _t.sleep(2 * (attempt + 1))  # 退避：2s → 4s
+    # 优先 Tavily（配置了 key 时）；失败/未配置降级免费 ddgs
+    try:
+        tav = _tavily_search(query)
+        if tav is not None:
+            results = tav
+    except Exception as e:
+        err = f"tavily: {e}"
+    # 免费降级通道：重试+退避（并行 worker 同时打接口触发限流是常态）
+    if not results:
+        for attempt in range(3):
+            try:
+                from ddgs import DDGS
+                results = list(DDGS().text(query, max_results=5))
+                if results:
+                    break
+                err = err or "无结果"
+            except Exception as e:
+                err = str(e)
+            _t.sleep(2 * (attempt + 1))  # 退避：2s → 4s
     if not results:
         return (f"错误：搜索失败({err})，已重试3次。请稍等片刻后用更简短的关键词重试，"
                 f"或先用 fetch_url 直接访问已知的官方网址。")

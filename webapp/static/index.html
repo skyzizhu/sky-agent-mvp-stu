@@ -61,6 +61,13 @@
   details .dx pre { background:var(--input); border-radius:6px; padding:6px 8px;
                     margin:4px 0; white-space:pre-wrap; word-break:break-all;
                     font:11px/1.5 ui-monospace,Monaco,monospace; max-height:220px; overflow:auto; }
+  ul.subs { list-style:none; margin:8px 0 0; padding:0; }
+  ul.subs > li { padding:6px 9px; border-bottom:1px dashed var(--line); font-size:12.5px; }
+  ul.subs > li:last-child { border-bottom:none; }
+  ul.subs .sub { color:var(--acc); font-family:ui-monospace,Monaco,monospace;
+                 font-weight:700; margin-right:7px; }
+  ul.subs details { margin-top:5px; }
+  ul.subs details summary { color:var(--acc); font-size:11px; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -152,6 +159,35 @@ function addEv(cls, html, detailsHtml){
   }
 }
 const msBadge = ms => ms != null ? ` <span class="tt">⏱ ${ms}ms</span>` : '';
+const esc = t => String(t ?? '').replace(/</g,'&lt;');
+
+// 层级分组：每个"步"是一张卡，步内动作按 x.1 / x.2 … 编号排列
+let curGroup = null, lastApprovalLi = null;
+function ensureGroup(n, title){
+  if (curGroup && curGroup.n === String(n)) return curGroup.ul;
+  const d = document.createElement('details');
+  d.className = 'ev'; d.open = true;
+  d.innerHTML = `<summary><b>${title}</b></summary><ul class="subs"></ul>`;
+  $('timeline').appendChild(d);
+  curGroup = {n: String(n), ul: d.querySelector('ul')};
+  return curGroup.ul;
+}
+function addSub(sub, html, detailsHtml, cls){
+  const ul = ensureGroup(sub.split('.')[0],
+    sub.split('.')[0] === '0' ? '第 0 步 · 启动准备' : `第 ${sub.split('.')[0]} 步`);
+  const li = document.createElement('li');
+  li.dataset.sub = sub;
+  li.innerHTML = `<span class="sub">${sub}</span>` + html;
+  if (detailsHtml) {
+    const d = document.createElement('details');
+    d.innerHTML = `<summary>展开详情</summary><div class="dx">${detailsHtml}</div>`;
+    li.appendChild(d);
+  }
+  if (cls) li.classList.add(cls);
+  ul.appendChild(li);
+  li.scrollIntoView({block:'nearest'});
+  return li;
+}
 
 async function start(){
   const q = $('question').value.trim();
@@ -169,65 +205,95 @@ function listen(){
   es = new EventSource(`/api/research/${runId}/events`);
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
+    const sub = ev.sub;
     switch(ev.type){
+
+      // ---- 0 号段：启动准备 ----
       case 'memory_inject':
-        addEv('', `🧠 载入 <b>${ev.count}</b> 条长期偏好`); break;
+        addSub(sub, `🧠 载入 <b>${ev.count}</b> 条长期偏好`,
+          ev.text ? `<pre>${esc(ev.text)}</pre>` : ''); break;
       case 'guardrail':
-        addEv('', `🛡️ 预算 <b>${ev.max.toLocaleString()}</b> tok`); break;
+        addSub(sub, `🛡️ 预算 <b>${Number(ev.max).toLocaleString()}</b> tok`); break;
+      case 'mcp':
+        addSub(sub, `🔌 ${esc(ev.msg)}`); break;
+
+      // ---- 步内 1 号颗粒：模型调用 ----
       case 'step': {
+        ensureGroup(ev.step, `第 ${ev.step} 步`);
         const d = ev.detail || {};
         const oc = d.model_output || {};
         const td = d.token_detail || {};
-        const summary = `<span class="tt">第${ev.step}步</span>` +
-          (ev.tools.length ? `🔧 点菜: <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
-          ` <span class="tt">输入${ev.prompt_tokens}tok</span>` + msBadge(ev.model_ms);
-        const detail =
+        addSub(sub,
+          `🧠 模型调用 → ` +
+          (ev.tools.length ? `点菜 <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
+          msBadge(ev.model_ms),
           `<b>本轮输入</b>：消息总数 ${ev.total_messages} 条（全量重发给模型）<br>` +
-          `<b>模型输出</b>：<pre>${(oc.content || '（无文本，仅点菜）').replace(/</g,'&lt;')}</pre>` +
+          `<b>模型输出</b>：<pre>${esc(oc.content || '（无文本，仅点菜）')}</pre>` +
           (oc.tool_calls && oc.tool_calls.length ?
-           `<b>点菜单</b>：<pre>${JSON.stringify(oc.tool_calls, null, 1)}</pre>` : '') +
+           `<b>点菜单</b>：<pre>${esc(JSON.stringify(oc.tool_calls, null, 1))}</pre>` : '') +
           `<b>token明细</b>：输入 ${td.prompt ?? '?'} / 输出 ${td.completion ?? '?'} / ` +
-          `思考 ${td.reasoning ?? 0} / 缓存命中 ${td.cached ?? 0}`;
-        addEv('', summary, detail);
+          `思考 ${td.reasoning ?? 0} / 缓存命中 ${td.cached ?? 0}`);
         $('budget_fill').style.width =
           Math.min(100, Math.round(ev.prompt_tokens / 60000 * 100)) + '%';
         break;
       }
-      case 'tool_result':
-        addEv('tool',
-          `📋 ${ev.name} → ${String(ev.result).slice(0,120)}` + msBadge(ev.tool_ms),
-          `<b>输入参数</b>：<pre>${JSON.stringify(ev.args, null, 1)}</pre>` +
-          `<b>完整输出（前4000字符）</b>：<pre>${String(ev.full_result || ev.result).replace(/</g,'&lt;')}</pre>`);
-        break;
+
+      // ---- 步内颗粒：各类注入（死线/预算/熔断） ----
+      case 'inject':
+        addSub(sub, `⚠️ ${esc(ev.note)}`); break;
+      case 'budget':
+        addSub(sub, `⚠️ ${esc(ev.note || '预算接近上限，注入收尾指令')}（${ev.used}/${ev.max}）`); break;
+      case 'breaker':
+        addSub(sub, `🚨 ${esc(ev.note)}（${ev.used}/${ev.max} tok）`); break;
+
+      // ---- 步内颗粒：压缩 ----
       case 'compact': {
         const st = ev.stats || {};
-        addEv('compact',
-          `★ 上下文压缩：${ev.before} → ${ev.after} 字符（旧 ${st.old_messages??'?'} 条摘要化，保留最近 ${st.kept_recent??'?'} 条）`,
-          `<b>压缩目的</b>：对抗 context rot 与 token 成本——上下文越长，模型对早期信息的召回越差，且每轮都为全部历史付全价。` +
-          `事实已由笔记兜底，旧历史可以放心摘要化。<br>` +
-          `<b>压缩方法</b>：${st.method || 'LLM摘要 + 最近原文保留'}。具体动作：把 ${st.old_messages??'?'} 条旧消息` +
-          `（含旧工具结果）交给模型压缩成保留四类信息的摘要（任务目标/关键发现/未完成事项/约束条件），` +
+        addSub(sub,
+          `★ 上下文压缩：${ev.before} → ${ev.after} 字符`,
+          `<b>压缩目的</b>：对抗 context rot 与 token 成本——上下文越长，模型对早期信息的召回越差，` +
+          `且每轮都为全部历史付全价。事实已由笔记兜底，旧历史可以放心摘要化。<br>` +
+          `<b>压缩方法</b>：${esc(st.method || 'LLM摘要 + 最近原文保留')}。把 ${st.old_messages??'?'} 条旧消息` +
+          `（含旧工具结果）压缩成保留四类信息的摘要（任务目标/关键发现/未完成事项/约束条件），` +
           `重建为 [system + 摘要 + 最近 ${st.kept_recent??'?'} 条原文]。<br>` +
-          `<b>压缩效果</b>：摘要 ${st.summary_chars??'?'} 字符替代了 ${st.old_messages??'?'} 条消息；` +
+          `<b>压缩效果</b>：摘要 ${st.summary_chars??'?'} 字符替代 ${st.old_messages??'?'} 条消息；` +
           `总长度 ${st.total_before??'?'} → ${st.total_after??'?'} 字符。<br>` +
-          `<b>本次摘要全文</b>：<pre>${(ev.summary||'').replace(/</g,'&lt;')}</pre>`);
+          `<b>本次摘要全文</b>：<pre>${esc(ev.summary)}</pre>`);
         break;
       }
-      case 'budget':
-        addEv('budget', `⚠️ ${ev.note || '预算接近上限，注入收尾指令'}（${ev.used}/${ev.max}）`); break;
+
+      // ---- 步内颗粒：工具执行 ----
+      case 'tool_result':
+        addSub(sub,
+          `🔧 ${ev.name} → ${String(ev.result).slice(0,110)}` + msBadge(ev.tool_ms),
+          `<b>输入参数</b>：<pre>${esc(JSON.stringify(ev.args, null, 1))}</pre>` +
+          `<b>完整输出（前4000字符）</b>：<pre>${esc(ev.full_result || ev.result)}</pre>`);
+        break;
+
+      // ---- 步内颗粒：HITL 审批 ----
       case 'approval_request':
         $('approval').style.display = '';
-        $('approval_text').textContent =
-          `${ev.tool}(${ev.args.slice(0,80)}) —— ${ev.reason}`; break;
+        $('approval_text').textContent = `${ev.tool}(${ev.args.slice(0,80)}) —— ${ev.reason}`;
+        lastApprovalLi = addSub(sub,
+          `⚠️ <b>等待人工确认</b>：${ev.tool}`, '', 'approval');
+        break;
       case 'approval_result':
         $('approval').style.display = 'none';
-        addEv(ev.approved ? 'tool' : 'approval',
-          `${ev.approved ? '✅ 已批准' : '❌ 已拒绝'}：${ev.tool}`); break;
+        if (lastApprovalLi) lastApprovalLi.innerHTML +=
+          ` <b style="color:${ev.approved?'#188554':'#c93c37'}">→ ${ev.approved?'✅ 已批准':'❌ 已拒绝'}</b>`;
+        break;
+
+      // ---- 步内颗粒：回填确认 ----
+      case 'backfill':
+        addSub(sub, `✅ 回填 <b>${ev.count}</b> 条工具结果（tool_call_id 配对完成，本轮结清）`); break;
+
+      // ---- 收尾 ----
       case 'final':
         $('budget_text').textContent = ev.used.toLocaleString() + ' tok';
         $('budget_fill').style.width =
           Math.min(100, Math.round(ev.used / ev.max * 100)) + '%';
-        addEv('final', `🏁 研究完成（${ev.steps} 步 · ${ev.used.toLocaleString()} tok · ${ev.stop_reason}）`);
+        addSub(`R`, `🏁 研究完成（${ev.steps} 步 · ${ev.used.toLocaleString()} tok · ${ev.stop_reason}` +
+          `${ev.total_ms!=null ? ' · 总耗时 '+(ev.total_ms/1000).toFixed(1)+'s' : ''}）`);
         if (ev.answer) {
           $('report').textContent = ev.answer;
           $('report').style.display = 'block';

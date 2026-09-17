@@ -111,14 +111,21 @@ class ResearchAgent:
         self._wrap_injected = False
 
     # ---------- 主流程（逻辑与 Stage 8 逐行对应） ----------
+    def _emit_sub(self, type: str, **p):
+        """步内子步骤事件：自动编号为 step.sub（如 1.2），供层级视图使用。"""
+        self._sub += 1
+        p["sub"] = f"{self._step_cur}.{self._sub}"
+        self.emit(type, **p)
+
     def run(self, question: str) -> dict:
         client = make_client()
+        self._step_cur, self._sub = 0, 0   # 0 号段 = 启动准备（记忆/护栏/MCP）
 
         # 记忆注入
         memory = MemoryStore(ROOT / "notes" / "memory.json")
         prefs_text = memory.format_for_prompt()
-        self.emit("memory_inject", count=len(memory.data.get("facts", [])),
-                  text=prefs_text)
+        self._emit_sub("memory_inject", count=len(memory.data.get("facts", [])),
+                       text=prefs_text)
 
         system_prompt = (
             "你是一个严谨的研究助理。规则：\n"
@@ -148,12 +155,12 @@ class ResearchAgent:
                     if any(k in n for k in ("write", "edit", "move", "create")):
                         DANGEROUS_TOOLS[n] = "外部MCP写操作：会修改本地文件"
             total = sum(len(c.openai_tools()) for c in self.mcp_clients)
-            self.emit("mcp", msg=f"已接入 {len(self.mcp_clients)} 个 MCP server，"
-                                 f"新增 {total} 个工具（写类已标危险级）")
+            self._emit_sub("mcp", msg=f"已接入 {len(self.mcp_clients)} 个 MCP server，"
+                                      f"新增 {total} 个工具（写类已标危险级）")
 
         budget = Budget(self.budget_max)
-        self.emit("guardrail", max=budget.max,
-                  dangerous=list(DANGEROUS_TOOLS))
+        self._emit_sub("guardrail", max=budget.max,
+                       dangerous=list(DANGEROUS_TOOLS))
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -168,20 +175,23 @@ class ResearchAgent:
         final = ""
 
         for step in range(1, config.MAX_LOOP_STEPS + 1):
+            self._step_cur, self._sub = step, 0   # 每步重置子序号
             # 中止检查（用户点了⏹）：注入一次收尾指令
             if self.stop_check() and not self._wrap_injected:
                 self._wrap_injected = True
                 stopped_reason = "user_stop"
                 messages.append({"role": "user", "content": WRAP_UP_MSG})
-                self.emit("budget", used=budget.used, max=budget.max,
-                          note="用户请求中止，注入收尾指令")
+                self._emit_sub("budget", used=budget.used, max=budget.max,
+                               note="用户请求中止，注入收尾指令")
             if step == config.MAX_LOOP_STEPS - 1:
                 messages.append({"role": "user", "content":
                     "⚠️ 时间将尽：note_read 后输出最终报告，不要再搜索。"})
+                self._emit_sub("inject", note="步数死线：注入最终报告指令")
             if budget.near_limit() and not budget_warned:
                 budget_warned = True
                 messages.append({"role": "user", "content": WRAP_UP_MSG})
-                self.emit("budget", used=budget.used, max=budget.max)
+                self._emit_sub("budget", used=budget.used, max=budget.max,
+                               note="预算接近上限，注入收尾指令")
 
             t_model = time.time()
             try:
@@ -201,7 +211,7 @@ class ResearchAgent:
                              "cached_tokens", None)
             reasoning = getattr(getattr(usage, "completion_tokens_details", None),
                                 "reasoning_tokens", None)
-            self.emit("step", step=step,
+            self._emit_sub("step", step=step,
                       tools=[tc.function.name for tc in (msg.tool_calls or [])],
                       prompt_tokens=usage.prompt_tokens,
                       model_ms=model_ms, total_messages=len(messages) + 1,
@@ -228,21 +238,24 @@ class ResearchAgent:
                 before = len(json.dumps(messages, ensure_ascii=False, default=str))
                 messages, summary, cstats = compact_messages(client, messages)
                 after = len(json.dumps(messages, ensure_ascii=False, default=str))
-                self.emit("compact", before=before, after=after, stats=cstats,
-                          summary=summary)
+                self._emit_sub("compact", before=before, after=after, stats=cstats,
+                               summary=summary)
 
             for tc in msg.tool_calls:
                 tool_sequence.append(tc.function.name)
                 args = json.loads(tc.function.arguments)
 
                 if approval_required(tc.function.name):  # HITL
-                    self.emit("approval_request", tool=tc.function.name,
+                    self._sub += 1
+                    self._approval_sub = f"{step}.{self._sub}"
+                    self.emit("approval_request", sub=self._approval_sub,
+                              tool=tc.function.name,
                               args=tc.function.arguments,
                               reason=DANGEROUS_TOOLS.get(tc.function.name, ""))
                     approved, receipt = self.approver(tc.function.name,
                                                       tc.function.arguments)
-                    self.emit("approval_result", tool=tc.function.name,
-                              approved=approved)
+                    self.emit("approval_result", sub=self._approval_sub,
+                              tool=tc.function.name, approved=approved)
                     messages.append({"role": "tool", "tool_call_id": tc.id,
                                      "content": receipt})
                     continue
@@ -263,9 +276,10 @@ class ResearchAgent:
                     errors.append(f"{tc.function.name} 连续失败(第{fail_streak}次)")
                 else:
                     fail_streak = 0
-                self.emit("tool_result", name=tc.function.name,
-                          result=str(result)[:200], full_result=str(result)[:4000],
-                          args=args, tool_ms=tool_ms)
+                self._emit_sub("tool_result", name=tc.function.name,
+                               result=str(result)[:200],
+                               full_result=str(result)[:4000],
+                               args=args, tool_ms=tool_ms)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": result})
             # ★ 熔断指令必须在全部 tool 结果回填之后再注入——
@@ -274,8 +288,11 @@ class ResearchAgent:
                 breaker_trips += 1
                 fail_streak = 0
                 messages.append({"role": "user", "content": CIRCUIT_BREAKER_MSG})
-                self.emit("breaker", used=budget.used, max=budget.max,
-                          note=f"工具连续失败，已注入熔断指令（第{breaker_trips}次）")
+                self._emit_sub("breaker", used=budget.used, max=budget.max,
+                               note=f"工具连续失败，已注入熔断指令（第{breaker_trips}次）")
+            if msg.tool_calls:
+                # 回填确认：本轮全部结果已配对入列（协议铁律：一圈一结清）
+                self._emit_sub("backfill", count=len(msg.tool_calls))
         else:
             final = "（达到最大步数未能完成任务，请缩小问题范围后重试）"
             stopped_reason = "max_steps"

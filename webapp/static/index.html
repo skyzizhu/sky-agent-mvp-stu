@@ -186,6 +186,7 @@ function loadHistory(){
       </div>`).join('');
   });
 }
+loadHistory();   // 页面加载即填充历史列表（此前漏调用：函数在但从不执行）
 
 // ---------- 渲染基础设施 ----------
 function resetTimeline(){

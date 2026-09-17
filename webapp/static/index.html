@@ -110,9 +110,9 @@
   <div>
     <div class="panel">
       <div class="btnrow" style="margin:0 0 8px" id="tiers">
-        <button class="tier" data-t="quick">⚡ 快问 · 1万 tok</button>
-        <button class="tier sel" data-t="standard">📊 标准 · 3万 tok</button>
-        <button class="tier" data-t="deep">🔍 深度 · 10万 tok</button>
+        <button class="tier" data-t="quick">⚡ 快问 · 2万 tok</button>
+        <button class="tier sel" data-t="standard">📊 标准 · 5万 tok</button>
+        <button class="tier" data-t="deep">🔍 深度 · 12万 tok</button>
       </div>
       <textarea id="question" placeholder="输入研究问题，如：对比 Coze 和 Dify 的收费模式"></textarea>
       <div class="btnrow">
@@ -196,8 +196,8 @@ function resetTimeline(){
 }
 function ensureGroup(n, title){
   if (curGroup && curGroup.n === String(n)) return curGroup.ul;
-  const d = document.createElement('details');
-  d.className = 'ev'; d.open = true;
+  const d = document.createElement('details');   // 默认折叠：点击标题展开
+  d.className = 'ev';
   d.innerHTML = `<summary><b>${title}</b></summary><ul class="subs"></ul>`;
   $('timeline').appendChild(d);
   curGroup = {n: String(n), ul: d.querySelector('ul')};

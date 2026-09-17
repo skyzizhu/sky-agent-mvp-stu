@@ -98,6 +98,11 @@ FORCED_FINAL_MSG = ("预算已用尽，立即结束调研。请输出《阶段�
 
 
 
+def _as_plain(m):
+    """pydantic 对象 → 全字段 dict（含 reasoning_content 等所有字段）。"""
+    return m if isinstance(m, dict) else m.model_dump()
+
+
 def _trim_unanswered_tool_calls(messages: list):
     """摘除末尾"点了菜但没执行"的 assistant(tool_calls) 消息（⚠P40 变体）。
     场景：硬停在模型刚点完菜、还没执行回填的时刻——带着这份非法历史
@@ -231,6 +236,7 @@ class ResearchAgent:
                                note="预算接近上限，注入收尾指令")
 
             t_model = time.time()
+            model_input = [_as_plain(m) for m in messages]   # ★ 完整输入快照（发给模型的全部内容）
             try:
                 msg, usage = call_llm(client, messages, tools=all_tools)
             except Exception as e:
@@ -251,13 +257,10 @@ class ResearchAgent:
             self._emit_sub("step", step=step,
                       tools=[tc.function.name for tc in (msg.tool_calls or [])],
                       prompt_tokens=usage.prompt_tokens,
-                      model_ms=model_ms, total_messages=len(messages) + 1,
+                      model_ms=model_ms, total_messages=len(model_input),
                       detail={
-                          "model_output": {"content": (msg.content or "")[:500],
-                                           "tool_calls": [
-                                               {"name": tc.function.name,
-                                                "arguments": tc.function.arguments}
-                                               for tc in (msg.tool_calls or [])]},
+                          "model_input": model_input,          # ★ 完整 messages（零删减）
+                          "model_output": msg.model_dump(),     # ★ 模型返回的全字段
                           "token_detail": {"prompt": usage.prompt_tokens,
                                            "completion": usage.completion_tokens,
                                            "cached": cached,
@@ -330,7 +333,7 @@ class ResearchAgent:
                     fail_streak = 0
                 self._emit_sub("tool_result", name=tc.function.name,
                                result=str(result)[:200],
-                               full_result=str(result)[:4000],
+                               full_result=str(result),   # 完整输出，不二次截断
                                args=args, tool_ms=tool_ms)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": result})

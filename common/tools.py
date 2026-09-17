@@ -152,9 +152,49 @@ def fetch_url(url: str) -> str:
                       ensure_ascii=False)
 
 
+def fetch_js(url: str, wait_ms: int = 4000) -> str:
+    """JS 渲染版抓取：用无头浏览器执行页面脚本后再提取文本。
+    分工：静态页用 fetch_url（快）；JS 动态渲染页/静态抓取为空时用本工具（慢但全）。"""
+    if not url.startswith(("http://", "https://")):
+        return "错误：url 必须以 http:// 或 https:// 开头。请从搜索结果的 url 字段复制完整链接。"
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return ("错误：未安装 playwright。请运行 "
+                "pip install playwright && playwright install chromium 后重试，"
+                "或改用 fetch_url。")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            # 注意：用默认浏览器UA。实验证明怪异UA会让部分网站的JS走不同渲染分支
+            # （yourtools.xyz 实测：默认UA渲染出定价区，自定义UA则整个区域不出现）
+            page = browser.new_page()
+            page.goto(url, timeout=30000, wait_until="load")
+            page.wait_for_timeout(int(wait_ms))   # 给 JS 渲染留时间
+            # 滚动到底部触发懒加载（定价/页脚等内容常在滚动后才渲染），再回顶部
+            for _ in range(3):
+                page.mouse.wheel(0, 20000)
+                page.wait_for_timeout(800)
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(500)
+            title = page.title()
+            text = page.inner_text("body")        # inner_text 包含页脚（fetch_url 会丢）
+            browser.close()
+    except Exception as e:
+        return (f"错误：JS渲染抓取失败({type(e).__name__})。"
+                f"请改用 fetch_url，或基于已有信息作答。")
+    text = __import__("re").sub(r"\n{3,}", "\n\n", (text or "").strip())
+    if not text:
+        return "错误：渲染后页面仍无文本内容。请换其他来源。"
+    return json.dumps({"url": url, "title": title, "content": text[:config.MAX_TOOL_RESULT_CHARS],
+                       "note": "JS渲染后提取（含页脚），已截断"}, ensure_ascii=False
+                      )[:config.MAX_TOOL_RESULT_CHARS]
+
+
 REGISTRY.update({"web_search": web_search, "fetch_url": fetch_url})
 
-REAL_REGISTRY = {"web_search": web_search, "fetch_url": fetch_url}
+REAL_REGISTRY = {"web_search": web_search, "fetch_url": fetch_url,
+                "fetch_js": fetch_js}
 # ============================================================
 # Stage 4：结构化笔记工具（agentic memory）
 #
@@ -235,6 +275,27 @@ REAL_REGISTRY.update({"note_write": note_write, "note_read": note_read})
 
 # ★把笔记工具加进 tools 说明书——漏了这步，模型根本不知道笔记工具存在
 #（Stage 4 实测教训：注册表里有 ≠ 模型知道，模型只认 tools 参数里的清单）
+FETCH_JS_TOOL = [{
+    "type": "function",
+    "function": {
+        "name": "fetch_js",
+        "description": "渲染页面JavaScript后提取全部可见文本（含页脚定价等）。"
+                       "当 fetch_url 返回的内容明显过少、或怀疑信息由JS动态渲染时使用。"
+                       "比 fetch_url 慢数秒，不要作为首选。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "完整的网页地址，以 http(s):// 开头"},
+                "wait_ms": {"type": "integer",
+                            "description": "渲染等待毫秒数，默认4000。页面很慢时可加大到8000"},
+            },
+            "required": ["url"],
+        },
+    },
+}]
+# 注意：FETCH_JS_TOOL 是列表，必须用 extend（append 会嵌套成 tools[2]=[...] → API 400）
+REAL_TOOLS.extend(FETCH_JS_TOOL)
+
 REAL_TOOLS.extend(NOTE_TOOLS)
 
 

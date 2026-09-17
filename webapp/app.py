@@ -109,7 +109,8 @@ class ResearchIn(BaseModel):
 @app.post("/api/research")
 def start_research(body: ResearchIn):
     run_id = uuid.uuid4().hex[:8]
-    agent = ResearchAgentWeb(run_id, impl="webapp", mcp_fs=False)
+    agent = ResearchAgentWeb(run_id, impl="webapp",
+                             use_mcp=os.getenv("MCP_FS") == "1")
     t = threading.Thread(target=agent.run, args=(body.question,), daemon=True)
     RUNS[run_id] = {"agent": agent, "thread": t, "question": body.question}
     agent._thread = t  # SSE 生成器通过它判断运行是否结束

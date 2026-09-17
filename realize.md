@@ -371,6 +371,7 @@
 - **作用（产品价值）**：把 agent 接进工具生态（文件系统/Slack/数据库……）而不被任何框架绑架。**MCP 只标准化工具的发现/描述/调用，不碰循环与上下文——agent 主权不变。**
 - **与下一节点衔接**：MCP 工具合并进 tools 参数后，与本地工具在同一条循环里无差别使用；写类工具自动进大节点 7 的危险分级。
 - **注意事项**：⚠P4 pydantic 蛇形命名（input_schema）；anyio TaskGroup 包裹异常必须打 traceback；**外部工具默认不可信**——写类自动升级危险级走 HITL。
+- **配置（Stage 11 补）**：`MCP_SERVERS` 环境变量（JSON 数组，每项 name/command/args）> 旧开关 `MCP_FS=1`（默认 filesystem 指向项目目录）> 不启用；三级解析在 config.py，agent_core 支持**多 server 并挂**（clients 列表 + 前缀路由 + 危险分级全量扫描）。
 
 ### 小节点 12.1 会话管理（start / _main / _submit）
 - **做什么**：后台线程启动事件循环；stdio 连接 server→initialize→list_tools→常驻保活；主线程同步提交协程。

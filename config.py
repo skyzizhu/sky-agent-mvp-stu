@@ -24,3 +24,19 @@ MAX_TOOL_RESULT_CHARS = 4000  # 单次工具结果最大字符数，防上下文
 # 生产环境中应设为模型窗口的 50%~70%（如 128k 窗口设 70k 左右）
 MAX_CONTEXT_TOKENS = 4000
 COMPACT_KEEP_RECENT = 6
+
+
+# Stage 10/11：MCP 服务器配置
+# 优先级：.env 的 MCP_SERVERS（JSON数组）> 旧开关 MCP_FS=1（默认filesystem）> 不启用
+# 每项格式：{"name": "前缀名", "command": "启动命令", "args": [...]}
+import json as _json
+from pathlib import Path as _Path
+_mcp_raw = os.getenv("MCP_SERVERS", "").strip()
+if _mcp_raw:
+    MCP_SERVERS = _json.loads(_mcp_raw)
+elif os.getenv("MCP_FS") == "1":
+    MCP_SERVERS = [{"name": "fs", "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-filesystem",
+                             str(_Path(__file__).resolve().parent)]}]
+else:
+    MCP_SERVERS = []

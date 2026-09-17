@@ -87,12 +87,12 @@ class ResearchAgent:
     """生产研究 agent 内核：逻辑与 Stage 8 完全一致，IO 可注入。"""
 
     def __init__(self, emit=None, approver=None, stop_check=None,
-                 budget_max=None, mcp_fs=False, impl="agent_core"):
+                 budget_max=None, use_mcp=False, impl="agent_core"):
         self.emit = emit or _cli_emit
         self.approver = approver or _cli_approver
         self.stop_check = stop_check or (lambda: False)
         self.budget_max = budget_max or (3000 if os.getenv("LOW_BUDGET") else 60000)
-        self.mcp_fs = mcp_fs
+        self.use_mcp = use_mcp
         self.impl = impl
         self.stop_reason = "model_done"
         self._wrap_injected = False
@@ -124,16 +124,19 @@ class ResearchAgent:
         tools_mod.REGISTRY["send_report"] = send_report
         all_tools = tools_mod.REAL_TOOLS + SEND_TOOL
 
-        mcp = None
-        if self.mcp_fs:
-            mcp = self._setup_mcp()
-            all_tools += mcp.openai_tools()
-            for t in mcp.openai_tools():
-                n = t["function"]["name"]
-                if any(k in n for k in ("write", "edit", "move", "create")):
-                    DANGEROUS_TOOLS[n] = "外部MCP写操作：会修改本地文件"
-            self.emit("mcp", msg=f"已接入 filesystem server，"
-                                 f"新增 {len(mcp.openai_tools())} 个工具（写类已标危险级）")
+        self.mcp_clients = []
+        if self.use_mcp:
+            for spec in config.MCP_SERVERS:   # 多 server：逐个启动，工具全合并
+                self.mcp_clients.append(self._setup_mcp(spec))
+            for c in self.mcp_clients:
+                all_tools += c.openai_tools()
+                for t in c.openai_tools():
+                    n = t["function"]["name"]
+                    if any(k in n for k in ("write", "edit", "move", "create")):
+                        DANGEROUS_TOOLS[n] = "外部MCP写操作：会修改本地文件"
+            total = sum(len(c.openai_tools()) for c in self.mcp_clients)
+            self.emit("mcp", msg=f"已接入 {len(self.mcp_clients)} 个 MCP server，"
+                                 f"新增 {total} 个工具（写类已标危险级）")
 
         budget = Budget(self.budget_max)
         self.emit("guardrail", max=budget.max,
@@ -203,10 +206,11 @@ class ResearchAgent:
                     continue
 
                 try:
-                    if mcp and mcp.owns(tc.function.name):
-                        result = mcp.call_tool(tc.function.name, args)
-                    else:
-                        result = tools_mod.dispatch(tc.function.name, args)
+                    owner = next((c for c in self.mcp_clients
+                                  if c.owns(tc.function.name)), None)
+                    result = (owner.call_tool(tc.function.name, args)
+                              if owner else
+                              tools_mod.dispatch(tc.function.name, args))
                 except Exception as e:
                     result = f"工具执行异常({type(e).__name__})：{e}"
                     errors.append(f"{tc.function.name}: {e}")
@@ -239,9 +243,10 @@ class ResearchAgent:
                 "steps": step, "tokens": budget.used, "errors": errors,
                 "run_id": rec["run_id"]}
 
-    def _setup_mcp(self):
+    def _setup_mcp(self, spec: dict):
         from common.mcp_client import MCPClient
-        mcp = MCPClient("fs", "npx", [
-            "-y", "@modelcontextprotocol/server-filesystem", str(ROOT)])
+        mcp = MCPClient(spec["name"], spec["command"], spec["args"])
         mcp.start()
+        if mcp.error:
+            raise RuntimeError(f"MCP server '{spec['name']}' 启动失败: {mcp.error[:300]}")
         return mcp

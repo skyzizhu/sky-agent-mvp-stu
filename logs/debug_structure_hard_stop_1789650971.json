@@ -1,0 +1,40 @@
+[
+  {
+    "i": 0,
+    "role": "system",
+    "tool_call_ids": null,
+    "tool_call_id": null,
+    "content_head": "你是一个严谨的研究助理。规则：\n1. 用 web_search/fetch_url 查证，禁止编造；\n2. 关键发现随手"
+  },
+  {
+    "i": 1,
+    "role": "user",
+    "tool_call_ids": null,
+    "tool_call_id": null,
+    "content_head": "查一下xtools App的订阅价格，官网是www.yourtools.xyz"
+  },
+  {
+    "i": 2,
+    "role": "assistant",
+    "tool_call_ids": [
+      "call_00_elbLVVk4njCLaBXp9xnE4407",
+      "call_01_iUTQFCELj3U4fyFUDYRy8144"
+    ],
+    "tool_call_id": null,
+    "content_head": "我来查证 xtools App 的订阅价格信息。"
+  },
+  {
+    "i": 3,
+    "role": "tool",
+    "tool_call_ids": null,
+    "tool_call_id": "call_00_elbLVVk4njCLaBXp9xnE4407",
+    "content_head": "{\"url\": \"https://www.yourtools.xyz\", \"content\": \"一站式AI与多媒体全能"
+  },
+  {
+    "i": 4,
+    "role": "tool",
+    "tool_call_ids": null,
+    "tool_call_id": "call_01_iUTQFCELj3U4fyFUDYRy8144",
+    "content_head": "[{\"title\": \"苹果公司提高TV+、Arcade和News+订阅价 加入提价潮\", \"url\": \"https:"
+  }
+]

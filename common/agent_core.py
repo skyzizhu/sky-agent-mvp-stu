@@ -96,6 +96,41 @@ FORCED_FINAL_MSG = ("预算已用尽，立即结束调研。请输出《阶段�
                     "不要再调用任何工具。")
 
 
+
+
+def _trim_unanswered_tool_calls(messages: list):
+    """摘除末尾"点了菜但没执行"的 assistant(tool_calls) 消息（⚠P40 变体）。
+    场景：硬停在模型刚点完菜、还没执行回填的时刻——带着这份非法历史
+    去做结题调用会 400。语义：那轮点菜作废，历史回到上一个合法状态。"""
+    while messages:
+        m = messages[-1]
+        if isinstance(m, dict):
+            role, tcs = m.get("role"), m.get("tool_calls")
+        else:
+            role, tcs = m.role, m.tool_calls
+        if role == "assistant" and tcs:
+            messages.pop()
+        else:
+            break
+
+
+
+
+def _dump_structure(messages: list, rec_hint: str):
+    """诊断探针：把消息结构 dump 到 logs/，排查配对类 400。"""
+    import json as _json
+    out = []
+    for i, m in enumerate(messages):
+        d = m if isinstance(m, dict) else m.model_dump()
+        tcs = d.get("tool_calls")
+        out.append({"i": i, "role": d.get("role"),
+                    "tool_call_ids": [t["id"] for t in tcs] if tcs else None,
+                    "tool_call_id": d.get("tool_call_id"),
+                    "content_head": (d.get("content") or "")[:60]})
+    p = ROOT / "logs" / f"debug_structure_{rec_hint}_{int(time.time())}.json"
+    p.write_text(_json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 class ResearchAgent:
     """生产研究 agent 内核：逻辑与 Stage 8 完全一致，IO 可注入。"""
 
@@ -236,6 +271,9 @@ class ResearchAgent:
             #   最后一次调用不带 tools 参数，模型物理上无法再点菜，
             #   只能输出结题报告（软提醒"请求它收尾"实测会被无视，硬拔才有效）
             if budget.exhausted or budget.near_limit(0.95):
+                _trim_unanswered_tool_calls(messages)   # ⚠P40：先恢复协议合法
+                if config.DEBUG_DUMP:
+                    _dump_structure(messages, rec_hint="hard_stop")
                 messages.append({"role": "user", "content": FORCED_FINAL_MSG})
                 self.emit("budget", used=budget.used, max=budget.max,
                           note="预算达硬线，移除工具强制结题")
@@ -314,6 +352,7 @@ class ResearchAgent:
         # ★ 兜底保证：非正常停止时也必须有最终产出（强制无工具结题）
         if stopped_reason in ("budget_hard_stop", "budget_exhausted", "max_steps",
                               "user_stop", "error") and not final:
+            _trim_unanswered_tool_calls(messages)   # ⚠P40：先恢复协议合法
             messages.append({"role": "user", "content": FORCED_FINAL_MSG})
             t_fin = time.time()
             try:

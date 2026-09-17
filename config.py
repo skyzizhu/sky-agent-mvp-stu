@@ -48,3 +48,6 @@ elif os.getenv("MCP_FS") == "1":
                              str(_Path(__file__).resolve().parent)]}]
 else:
     MCP_SERVERS = []
+
+# 诊断开关：True 时在强制结题等关键路径 dump 消息结构到 logs/（排查配对类400）
+DEBUG_DUMP = os.getenv("DEBUG_DUMP", "").lower() in ("1", "true")

@@ -47,8 +47,9 @@
   .approval .yes { background:var(--ok); }
   .approval .no { background:var(--err); }
   .report { background:#fbfbfc; border:1px solid var(--line); border-radius:8px;
-            padding:12px; white-space:pre-wrap; font-size:13.5px; max-height:60vh;
-            overflow:auto; margin-top:8px; display:none; }
+            padding:12px; font-size:13.5px; max-height:60vh;
+            overflow:auto; margin-top:8px; }
+  .report.md { white-space:normal; }   /* md渲染后是HTML，pre-wrap会产生多余空行 */
   .placeholder { color:var(--dim); font-size:12px; text-align:center; padding:30px 0; }
   .md h1, .md h2, .md h3 { margin:.6em 0 .35em; line-height:1.35; }
   .md h1 { font-size:17px; } .md h2 { font-size:15.5px; } .md h3 { font-size:14px; }

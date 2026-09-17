@@ -240,17 +240,18 @@ function renderEvent(ev, live){
     case 'step': {
       ensureGroup(ev.step, `第 ${ev.step} 步`);
       const d = ev.detail || {};
-      const oc = d.model_output || {};
       const td = d.token_detail || {};
+      const mi = d.model_input || [];
+      const mo = d.model_output || {};
       addSub(sub,
         `🧠 模型调用 → ` +
         (ev.tools.length ? `点菜 <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
         msBadge(ev.model_ms),
-        `<b>本轮输入</b>：消息总数 ${ev.total_messages} 条（全量重发给模型）<br>` +
-        `<b>模型输出</b>：<pre>${esc(oc.content || '（无文本，仅点菜）')}</pre>` +
-        (oc.tool_calls && oc.tool_calls.length ?
-         `<b>点菜单</b>：<pre>${esc(JSON.stringify(oc.tool_calls, null, 1))}</pre>` : '') +
-        `<b>token明细</b>：输入 ${td.prompt ?? '?'} / 输出 ${td.completion ?? '?'} / ` +
+        `<b>① 给到模型的完整输入（messages 全量，零删减，共 ${ev.total_messages} 条）</b>` +
+        `<pre>${esc(JSON.stringify(mi, null, 1))}</pre>` +
+        `<b>② 模型的完整输出（全字段，key 和 value 一个不落）</b>：` +
+        `<pre>${esc(JSON.stringify(mo, null, 1))}</pre>` +
+        `<b>③ token明细</b>：输入 ${td.prompt ?? '?'} / 输出 ${td.completion ?? '?'} / ` +
         `思考 ${td.reasoning ?? 0} / 缓存命中 ${td.cached ?? 0}`);
       $('budget_fill').style.width =
         Math.min(100, Math.round(ev.prompt_tokens / 60000 * 100)) + '%';

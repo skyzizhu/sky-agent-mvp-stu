@@ -276,7 +276,8 @@ function renderEvent(ev, live){
         `重建为 [system + 摘要 + 最近 ${st.kept_recent??'?'} 条原文]。<br>` +
         `<b>压缩效果</b>：摘要 ${st.summary_chars??'?'} 字符替代 ${st.old_messages??'?'} 条消息；` +
         `总长度 ${st.total_before??'?'} → ${st.total_after??'?'} 字符。<br>` +
-        `<b>本次摘要全文</b>：<pre>${esc(ev.summary)}</pre>`);
+        `<b>④ 压缩调用的完整输入（交给摘要模型的旧历史全文）</b>：<pre>${esc(ev.summarizer_input || '（本次运行未记录，早于该功能）')}</pre>` +
+        `<b>⑤ 压缩调用的完整输出（摘要全文）</b>：<pre>${esc(ev.summary)}</pre>`);
       break;
     }
 
@@ -304,8 +305,22 @@ function renderEvent(ev, live){
       }
       break;
 
-    case 'backfill':
-      addSub(sub, `✅ 回填 <b>${ev.count}</b> 条工具结果（tool_call_id 配对完成，本轮结清）`); break;
+    case 'backfill': {
+      const items = ev.items || [];
+      const listing = items.map(i =>
+        `tool_call_id=${i.tool_call_id}\n${String(i.content).slice(0,600)}`).join('\n────────\n');
+      addSub(sub,
+        `✅ 回填 <b>${ev.count}</b> 条工具结果（tool_call_id 配对完成，本轮结清）`,
+        items.length ? `<b>本轮实际追加进 messages 的每条消息（id + 完整内容）</b>：<pre>${esc(listing)}</pre>`
+                     : '（本轮无回填明细数据）');
+      break;
+    }
+    case 'memory_extract':
+      addStandalone('memory_extract',
+        `🧠 会话结束：记忆提取 → <b>${ev.count}</b> 条候选偏好` + msBadge(ev.ms),
+        `<b>输入（本次会话的对话记录全文，交给提取模型）</b>：<pre>${esc(ev.transcript || '（未记录）')}</pre>` +
+        `<b>输出（提取出的偏好）</b>：<pre>${esc(JSON.stringify(ev.prefs, null, 1))}</pre>`);
+      break;
 
     case 'final':
       $('budget_text').textContent = ev.used.toLocaleString() + ' tok';

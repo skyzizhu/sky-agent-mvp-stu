@@ -96,7 +96,10 @@ def compact_messages(client, messages: list,
              "summary_chars": len(summary),
              "total_before": len(messages), "total_after": len(new_messages),
              "method": "LLM摘要(保留目标/发现/待办/约束) + 最近原文保留",
-             "purpose": "对抗context rot与token成本：旧历史有损压缩，事实由笔记兜底"}
+             "purpose": "对抗context rot与token成本：旧历史有损压缩，事实由笔记兜底",
+             # ★ 全量 IO：交给摘要模型的完整输入 + 摘要模型的完整输出
+             "summarizer_input": render_messages_for_summary(old),
+             "summarizer_output": summary}
     new_messages.extend(recent)
     return new_messages, summary, stats
 

@@ -296,6 +296,7 @@ class ResearchAgent:
                 self._emit_sub("compact", before=before, after=after, stats=cstats,
                                summary=summary)
 
+            backfill_items = []   # 本轮实际追加的 tool 消息（供回填颗粒详单）
             for tc in msg.tool_calls:
                 tool_sequence.append(tc.function.name)
                 args = json.loads(tc.function.arguments)
@@ -311,8 +312,11 @@ class ResearchAgent:
                                                       tc.function.arguments)
                     self.emit("approval_result", sub=self._approval_sub,
                               tool=tc.function.name, approved=approved)
-                    messages.append({"role": "tool", "tool_call_id": tc.id,
-                                     "content": receipt})
+                    receipt_msg = {"role": "tool", "tool_call_id": tc.id,
+                                   "content": receipt}
+                    messages.append(receipt_msg)
+                    backfill_items.append({"tool_call_id": tc.id,
+                                           "content": receipt})
                     continue
 
                 t_tool = time.time()
@@ -335,8 +339,11 @@ class ResearchAgent:
                                result=str(result)[:200],
                                full_result=str(result),   # 完整输出，不二次截断
                                args=args, tool_ms=tool_ms)
-                messages.append({"role": "tool", "tool_call_id": tc.id,
-                                 "content": result})
+                appended = {"role": "tool", "tool_call_id": tc.id,
+                            "content": result}
+                messages.append(appended)
+                backfill_items.append({"tool_call_id": tc.id,
+                                       "content": result})
             # ★ 熔断指令必须在全部 tool 结果回填之后再注入——
             #   插进 assistant(tool_calls) 与 tool 结果之间会破坏配对 → API 400
             if fail_streak >= 4 and breaker_trips < 2:
@@ -347,7 +354,8 @@ class ResearchAgent:
                                note=f"工具连续失败，已注入熔断指令（第{breaker_trips}次）")
             if msg.tool_calls:
                 # 回填确认：本轮全部结果已配对入列（协议铁律：一圈一结清）
-                self._emit_sub("backfill", count=len(msg.tool_calls))
+                self._emit_sub("backfill", count=len(msg.tool_calls),
+                               items=backfill_items)
         else:
             final = "（达到最大步数未能完成任务，请缩小问题范围后重试）"
             stopped_reason = "max_steps"
@@ -382,6 +390,7 @@ class ResearchAgent:
         t_mem = time.time()
         new_prefs = extract_preferences(client, transcript)
         self.emit("memory_extract", count=len(new_prefs), prefs=new_prefs,
+                  transcript=transcript,
                   ms=round((time.time() - t_mem) * 1000))
         added = memory.merge(new_prefs)
         self.emit("memory_saved", added=added)

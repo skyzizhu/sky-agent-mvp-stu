@@ -113,6 +113,7 @@
         <button class="tier" data-t="quick">⚡ 快问 · 2万 tok</button>
         <button class="tier sel" data-t="standard">📊 标准 · 5万 tok</button>
         <button class="tier" data-t="deep">🔍 深度 · 12万 tok</button>
+        <button class="tier" data-t="unlimited">🚀 深度+ · 不限额度</button>
       </div>
       <textarea id="question" placeholder="输入研究问题，如：对比 Coze 和 Dify 的收费模式"></textarea>
       <div class="btnrow">
@@ -168,7 +169,9 @@ document.querySelectorAll('#tiers .tier').forEach(b => {
     document.querySelectorAll('#tiers .tier').forEach(x => x.classList.remove('sel'));
     b.classList.add('sel');
     tier = b.dataset.t;
-    $('budget_text').textContent = Number(TIERS[tier] || 30000).toLocaleString() + ' tok';
+    $('budget_text').textContent = TIERS[tier]
+      ? Number(TIERS[tier]).toLocaleString() + ' tok'
+      : '不限额度（步数上限仍生效）';
     $('budget_fill').style.width = '0%';
   };
 });
@@ -253,8 +256,10 @@ function renderEvent(ev, live){
         `<pre>${esc(JSON.stringify(mo, null, 1))}</pre>` +
         `<b>③ token明细</b>：输入 ${td.prompt ?? '?'} / 输出 ${td.completion ?? '?'} / ` +
         `思考 ${td.reasoning ?? 0} / 缓存命中 ${td.cached ?? 0}`);
-      $('budget_fill').style.width =
-        Math.min(100, Math.round(ev.prompt_tokens / 60000 * 100)) + '%';
+      if (TIERS[tier] != null) {
+        $('budget_fill').style.width =
+          Math.min(100, Math.round(ev.prompt_tokens / TIERS[tier] * 100)) + '%';
+      }
       break;
     }
 

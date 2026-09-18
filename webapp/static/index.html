@@ -221,11 +221,21 @@ function addSub(sub, html, detailsHtml){
   li.scrollIntoView({block:'nearest'});
   return li;
 }
-function addStandalone(cls, html){
+function addStandalone(cls, html, detailsHtml){
   const div = document.createElement('div');
+  if (detailsHtml) {   // 带详单 → 渲染为可展开卡片（与 addSub 同构）
+    div.className = 'ev ' + cls;
+    div.innerHTML = `<summary>${html}</summary><div class="dx">${detailsHtml}</div>`;
+    const d = document.createElement('details');
+    d.className = div.className; d.innerHTML = div.innerHTML;
+    $('timeline').appendChild(d);
+    d.scrollIntoView({block:'nearest'});
+    return d;
+  }
   div.className = 'ev ' + cls; div.innerHTML = html;
   $('timeline').appendChild(div);
   div.scrollIntoView({block:'nearest'});
+  return div;
 }
 // ---------- 统一渲染器：实时 SSE 与历史回放共用 ----------
 function renderEvent(ev, live){

@@ -30,8 +30,10 @@ SCHEMA_HINT = {
 }
 
 
-def log_run(**fields) -> dict:
-    rec = {"run_id": uuid.uuid4().hex[:8],
+def log_run(run_id: str | None = None, **fields) -> dict:
+    """run_id 可由调用方传入（如 Web 工作台的运行 id）——
+    一个运行全链路（RunLog/事件存档/前端）必须共用同一个 id。"""
+    rec = {"run_id": run_id or uuid.uuid4().hex[:8],
            "ts": time.strftime("%Y-%m-%d %H:%M:%S"), **fields}
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(LOG_PATH, "a", encoding="utf-8") as f:

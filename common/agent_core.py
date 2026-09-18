@@ -142,7 +142,8 @@ class ResearchAgent:
     _DEFAULT = object()   # 哨兵：区分"未传"与"显式不限"
 
     def __init__(self, emit=None, approver=None, stop_check=None,
-                 budget_max=_DEFAULT, use_mcp=False, impl="agent_core"):
+                 budget_max=_DEFAULT, use_mcp=False, impl="agent_core",
+                 run_id=None):
         self.emit = emit or _cli_emit
         self.approver = approver or _cli_approver
         self.stop_check = stop_check or (lambda: False)
@@ -155,6 +156,7 @@ class ResearchAgent:
         self.impl = impl
         self.stop_reason = "model_done"
         self._wrap_injected = False
+        self.run_id = run_id   # 外部传入则沿用（Web 工作台），否则自生成
 
     # ---------- 主流程（逻辑与 Stage 8 逐行对应） ----------
     def _emit_sub(self, type: str, **p):
@@ -412,7 +414,8 @@ class ResearchAgent:
         added = memory.merge(new_prefs, client=client)
         self.emit("memory_saved", added=added)
 
-        rec = log_run(impl=self.impl, question=question[:80], steps=step,
+        rec = log_run(run_id=self.run_id, impl=self.impl,
+                      question=question[:80], steps=step,
                       tool_calls=tool_sequence, tokens=budget.used,
                       budget_max=budget.max, stop_reason=stopped_reason,
                       errors=errors, extra={"new_preferences": added})

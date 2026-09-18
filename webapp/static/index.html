@@ -17,6 +17,13 @@
   .gauge .track { display:inline-block; width:120px; height:8px; background:var(--input);
                   border-radius:99px; overflow:hidden; vertical-align:middle; margin:0 6px; }
   .gauge .fill { display:block; height:100%; background:var(--acc); width:0%; transition:width .4s; }
+  .runstatus { display:none; margin:12px 20px 0; padding:9px 14px; background:#eef4ff;
+               border:1px solid #c7d7f5; border-radius:8px; font-size:12.5px; color:#274a8f; }
+  .runstatus .dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+                    background:var(--acc); margin-right:8px; animation:pulse 1.2s infinite; }
+  .runstatus.connlost { background:#fdebea; border-color:#f0c4c0; color:var(--err); }
+  .runstatus.connlost .dot { background:var(--err); animation:none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
   main { display:grid; grid-template-columns:250px 1fr; gap:14px; padding:14px 20px; }
   @media (max-width:900px){ main { grid-template-columns:1fr; } }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; }
@@ -103,6 +110,13 @@
   </div>
 </header>
 
+<div id="runstatus" class="runstatus" style="display:none">
+  <span class="dot"></span><b>运行中</b>
+  <span id="rs_step"></span>
+  <span id="rs_tier"></span>
+  <span id="rs_time"></span>
+</div>
+
 <main>
   <!-- 左：运行历史 -->
   <div class="panel">
@@ -156,7 +170,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-let runId = null, es = null, liveMode = false;
+let runId = null, es = null, liveMode = false, doneSeen = false;
 let curGroup = null, lastApprovalLi = null;
 let TIERS = {quick:10000, standard:30000, deep:100000};
 const esc = t => String(t ?? '').replace(/</g,'&lt;');
@@ -247,6 +261,28 @@ function addStandalone(cls, html, detailsHtml){
   div.scrollIntoView({block:'nearest'});
   return div;
 }
+// ---------- 运行状态条 ----------
+let runTimer = null;
+function setTiersEnabled(on){
+  document.querySelectorAll('#tiers .tier').forEach(b => b.disabled = !on);
+}
+function startRunStatus(){
+  const t0 = Date.now();
+  const el = $('runstatus');
+  el.classList.remove('connlost');
+  el.style.display = 'block';
+  $('rs_tier').textContent = tier === 'unlimited' ? '不限额度' :
+    ({quick:'快问', standard:'标准', deep:'深度'}[tier] || tier);
+  const tick = () => { $('rs_time').textContent = Math.round((Date.now()-t0)/1000) + 's'; };
+  tick();
+  if (runTimer) clearInterval(runTimer);
+  runTimer = setInterval(tick, 1000);
+}
+function stopRunStatus(){
+  if (runTimer) { clearInterval(runTimer); runTimer = null; }
+  $('runstatus').style.display = 'none';
+}
+
 // ---------- 统一渲染器：实时 SSE 与历史回放共用 ----------
 function renderEvent(ev, live){
   const sub = ev.sub;
@@ -394,7 +430,9 @@ function renderEvent(ev, live){
       setReportButtons(!!lastReportMd);
       break;
     case 'done':
-      if (live) { es.close(); $('start').disabled = false; $('stopbtn').disabled = true; loadHistory(); }
+      doneSeen = true;
+      if (live) { es.close(); $('start').disabled = false; $('stopbtn').disabled = true;
+        setTiersEnabled(true); stopRunStatus(); loadHistory(); }
       break;
     case 'error':
       addStandalone('approval', `❌ 运行错误：${esc(ev.message)}`); break;
@@ -438,11 +476,14 @@ async function start(){
   const q = $('question').value.trim();
   if (!q) { alert('先输入研究问题'); return; }
   if (es) es.close();
+  doneSeen = false;
   liveMode = true;
   $('start').disabled = true; $('stopbtn').disabled = false;
+  setTiersEnabled(false);
   resetTimeline();
   $('report_panel').style.display = 'none';
   lastReportMd = ''; setReportButtons(false);   // 新研究开始：清空报告原文与按钮态
+  startRunStatus();
   const r = await fetch('/api/research', {method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({question:q, tier})});
@@ -454,8 +495,21 @@ async function start(){
 function listen(){
   es = new EventSource(`/api/research/${runId}/events`);
   es.onmessage = e => { renderEvent(JSON.parse(e.data), true); };
-  es.onerror = () => { es.close(); };
+  es.onerror = () => {
+    es.close();
+    if (!doneSeen) {   // 运行未完成却断流 = 异常，明确告知而不是无声卡住
+      stopRunStatus();
+      $('start').disabled = false; $('stopbtn').disabled = true; setTiersEnabled(true);
+      addStandalone('approval', '⚠️ 实时连接中断（运行通常仍在后台继续）。' +
+        '请稍后刷新页面，或从左侧历史记录点击该运行查看结果。');
+    }
+  };
 }
+
+// ---------- 快捷提交：Ctrl/⌘ + Enter ----------
+$('question').addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') start();
+});
 
 // ---------- 历史回放 ----------
 async function loadRun(id){

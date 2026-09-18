@@ -47,7 +47,8 @@ def _cli_emit(type: str, **p):
     elif type == "compact":
         print(f"   ★ 压缩: 上下文 {p['before']}→{p['after']} 字符")
     elif type == "budget":
-        print(f"   [护栏] 预算接近上限({p['used']}/{p['max']})，注入收尾指令")
+        note = p.get("note") or "预算接近上限，注入收尾指令"
+        print(f"   [护栏] {note}（{p['used']}/{p['max'] if p['max'] is not None else '不限'} tok）")
     elif type == "breaker":
         print(f"   [熔断] {p['note']}")
     elif type == "error":
@@ -249,7 +250,7 @@ class ResearchAgent:
                 messages.append({"role": "user", "content": WRAP_UP_MSG})
                 self._emit_sub("budget", used=budget.used, max=budget.max,
                                note="用户请求中止，注入收尾指令")
-            if step == config.MAX_LOOP_STEPS - 1:
+            if step >= config.MAX_LOOP_STEPS - 1:
                 messages.append({"role": "user", "content":
                     "⚠️ 时间将尽：note_read 后输出最终报告，不要再搜索。"})
                 self._emit_sub("inject", note="步数死线：注入最终报告指令")
@@ -388,8 +389,23 @@ class ResearchAgent:
                 self._emit_sub("backfill", count=len(msg.tool_calls),
                                items=backfill_items)
         else:
-            final = "（达到最大步数未能完成任务，请缩小问题范围后重试）"
+            # ★ 步数耗尽：不丢占位符——强制无工具收尾（同预算硬收尾路径）：
+            #   摘除未应答点菜（协议合法）→ 带笔记输出《阶段性结题报告》
             stopped_reason = "max_steps"
+            _trim_unanswered_tool_calls(messages)   # ⚠P40：末尾未应答点菜作废
+            messages.append({"role": "user", "content": FORCED_FINAL_MSG})
+            self.emit("budget", used=budget.used,
+                      max=(budget.max if budget.max is not None else 0),
+                      note="步数耗尽：强制无工具结题")
+            t_fin = time.time()
+            try:
+                fmsg, fusage = call_llm(client, messages)   # 无 tools：不可能再点菜
+                budget.add(fusage)
+                final = fmsg.content or final
+                self.emit("forced_final", ms=round((time.time() - t_fin) * 1000),
+                          output=(fmsg.content or "")[:400])
+            except Exception as e:
+                errors.append(f"max_steps_forced: {type(e).__name__}: {str(e)[:150]}")
 
         # ★ 兜底保证：非正常停止时也必须有最终产出（强制无工具结题）
         if stopped_reason in ("budget_hard_stop", "budget_exhausted", "max_steps",

@@ -160,8 +160,8 @@
 - **注意**：多 tool_calls 用内层 for 逐条处理；执行异常转可行动错误文本，不让异常裸奔进上下文。
 
 ### 小节点 4.3 停止条件（六出口）
-- **做什么**：stop（模型完成）/ budget_hard_stop（95% 硬线）/ budget_exhausted / user_stop（⏹ 按钮）/ max_steps / error——**任何出口都必须有交付物**（见 4.6）。
-- **注意**：⚠P5 判断"完成"要看 stop 而非仅"无 tool_calls"（防 length 截断误判）。
+- **做什么**：stop（模型完成）/ budget_hard_stop（95% 硬线）/ budget_exhausted / user_stop（⏹ 按钮）/ max_steps / error——**任何出口都必须有交付物**：max_steps 出口同样触发强制无工具收尾（4.6），占位符时代已终结。
+- **注意**：⚠P5 判断"完成"要看 stop 而非仅"无 tool_calls"（防 length 截断误判）；死线注入条件为 `step >= max-1`（最后两步每步都提醒）。
 
 ### 小节点 4.4 死线注入（收敛护栏）
 - **做什么**：倒数第 2 步注入"⚠️时间将尽：note_read 后立即输出报告，不要再搜索"。

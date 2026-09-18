@@ -392,7 +392,7 @@ class ResearchAgent:
         self.emit("memory_extract", count=len(new_prefs), prefs=new_prefs,
                   transcript=transcript,
                   ms=round((time.time() - t_mem) * 1000))
-        added = memory.merge(new_prefs)
+        added = memory.merge(new_prefs, client=client)
         self.emit("memory_saved", added=added)
 
         rec = log_run(impl=self.impl, question=question[:80], steps=step,

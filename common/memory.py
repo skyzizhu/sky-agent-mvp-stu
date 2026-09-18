@@ -37,21 +37,56 @@ class MemoryStore:
         lines = [f"- {f['text']}" for f in facts[-20:]]
         return "【用户长期记忆（历史会话中沉淀的偏好，请遵守）】\n" + "\n".join(lines)
 
-    def merge(self, new_preferences: list) -> int:
-        """合并新偏好。MVP用去重规则：与已有条目相同或被包含则跳过。
-        （进阶版应让LLM做语义合并与冲突更新，见 notes）"""
+    def merge(self, new_preferences: list, client=None) -> int:
+        """合并新偏好。有 client 时走 LLM 语义合并（同义合并/冲突以新为准/格式统一），
+        失败降级为子串判重规则。"""
+        new_preferences = [p.strip() for p in new_preferences
+                           if isinstance(p, str) and len(p.strip()) >= 4]
+        if not new_preferences:
+            return 0
+        if client is not None:
+            try:
+                return self._merge_semantic(client, new_preferences)
+            except Exception:
+                pass  # 任何失败都降级为规则合并
+        return self._merge_rule(new_preferences)
+
+    def _merge_semantic(self, client, new_preferences: list) -> int:
+        from common.llm_client import call_llm
+        existing = [f["text"] for f in self.data["facts"]]
+        msg, _ = call_llm(
+            client,
+            [{"role": "system",
+              "content": '你是记忆管理员。把【新偏好】合并进【现有记忆】。规则：'
+                         '同义/近义的合并为一条（保留表述更完整的）；相互冲突的以新偏好为准改写；'
+                         '措辞统一（不要同一条出现两种写法）。只输出 JSON：'
+                         '{"facts": ["合并后的完整记忆列表"]}，总数不超过 20 条。'},
+             {"role": "user",
+              "content": f"【现有记忆】\n{json.dumps(existing, ensure_ascii=False)}\n\n"
+                         f"【新偏好】\n{json.dumps(new_preferences, ensure_ascii=False)}"}],
+            response_format={"type": "json_object"},
+        )
+        merged = [t.strip() for t in json.loads(msg.content).get("facts", [])
+                  if isinstance(t, str) and len(t.strip()) >= 4][:20]
+        # 保留原时间戳：旧条目沿用旧 ts，新增条目用今天
+        ts_map = {f["text"]: f["ts"] for f in self.data["facts"]}
+        before = set(existing)
+        self.data["facts"] = [{"text": t,
+                               "ts": ts_map.get(t, time.strftime("%Y-%m-%d"))}
+                              for t in merged]
+        self.save()
+        return sum(1 for t in (f["text"] for f in self.data["facts"]) if t not in before)
+
+    def _merge_rule(self, new_preferences: list) -> int:
+        """规则降级：子串判重 + 容量上限。"""
         added = 0
         existing = [f["text"] for f in self.data["facts"]]
         for text in new_preferences:
-            text = text.strip()
-            if not text or len(text) < 4:
-                continue
             if any(text in e or e in text for e in existing):
                 continue
             self.data["facts"].append({"text": text, "ts": time.strftime("%Y-%m-%d")})
             existing.append(text)
             added += 1
-        # 容量上限：超过20条丢最旧的
         self.data["facts"] = self.data["facts"][-20:]
         self.save()
         return added

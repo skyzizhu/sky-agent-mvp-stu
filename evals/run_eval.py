@@ -1,13 +1,13 @@
 """
-评测运行器：跑评测集 → 逐题让judge打分 → 聚合成Markdown报告。
+评测运行器 v2：评测对象 = 当前生产内核（common/agent_core.py 的 ResearchAgent）。
+跑评测集 → 逐题让 judge 打分（含证据核对）→ 聚合 Markdown 报告。
 
 用法:
-  .venv/bin/python evals/run_eval.py          # 跑全部12题（约20分钟）
-  .venv/bin/python evals/run_eval.py --n 3    # 只跑前3题（快速验证，约5分钟）
+  .venv/bin/python evals/run_eval.py          # 全部12题（约30分钟）
+  .venv/bin/python evals/run_eval.py --n 3    # 前3题快速验证
   .venv/bin/python evals/run_eval.py --id q02 q07   # 指定题目
 
-产出: evals/results/eval_月日_时分.md
-之后每次改动（改prompt/换工具/调阈值）都重跑一遍对比总分——这就是agent的回归测试。
+产出: evals/results/eval_月日_时分.md（正式基线/回归对比用）
 """
 import argparse
 import json
@@ -15,9 +15,11 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]  # evals/ 的上一层 = 项目根
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import config
+from common.agent_core import ResearchAgent
 from common.llm_client import make_client
 from evals.judge import judge
 
@@ -36,46 +38,53 @@ def main():
     bank = bank[:args.n]
 
     client = make_client()
-    rows, start = [], time.time()
+    rows, t_start = [], time.time()
+
     for i, q in enumerate(bank, 1):
         print(f"\n{'='*60}\n[{i}/{len(bank)}] {q['id']} {q['question']}")
         t0 = time.time()
-        # 延迟导入：避免评测脚本一启动就触发agent模块的副作用
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "v3", ROOT / "stages/05_structured_eval/research_agent_v3.py")
-        v3 = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(v3)
-
-        r = v3.run(q["question"])
-        scores = judge(client, q["question"], r["outline"], r["evidence"], r["answer"])
+        # 评测对象：当前生产内核（标准档预算）
+        agent = ResearchAgent(impl="eval_production", run_id=f"eval_{q['id']}")
+        r = agent.run(q["question"])
+        scores = judge(client, q["question"], r.get("outline", {}),
+                       r.get("evidence", []), r["answer"])
+        secs = round(time.time() - t0)
         rows.append({**q, "scores": scores, "answer": r["answer"],
-                     "tokens": r["usage"], "seconds": round(time.time() - t0)})
-        print(f"  总分 {scores.get('total')} | 用时{rows[-1]['seconds']}s | "
+                     "tokens": r["tokens"], "seconds": secs})
+        print(f"  总分 {scores.get('total')} | {secs}s | {r['tokens']} tok | "
               f"问题: {scores.get('issues', [])[:2]}")
 
-    # ---- 聚合报告 ----
-    avg = sum(r["scores"].get("total", 0) for r in rows) / max(len(rows), 1)
-    lines = [f"# 评测报告  {time.strftime('%Y-%m-%d %H:%M')}",
-             f"\n**总平均分: {avg:.2f} / 1.00**　|　题数: {len(rows)}　|　"
-             f"总耗时: {round(time.time()-start)}s\n",
-             "| 题号 | 题型 | 总分 | 有据 | 有源 | 覆盖 | 简洁 | 主要问题 |",
-             "|---|---|---|---|---|---|---|---|"]
+    # ---- 聚合 ----
+    scored = [r for r in rows if r["scores"].get("total") is not None]
+    avg = sum(r["scores"].get("total", 0) for r in scored) / max(len(scored), 1)
+    dims = ["supported", "sourced", "complete", "concise"]
+    dim_avg = {d: round(sum(r["scores"].get(d, 0) for r in scored) / max(len(scored), 1), 2)
+               for d in dims}
+    total_tokens = sum(r["tokens"] for r in rows)
+    total_secs = round(time.time() - t_start)
+
+    lines = [f"# 正式基线评测报告  {time.strftime('%Y-%m-%d %H:%M')}", "",
+             f"**对象**: 生产内核 ResearchAgent（标准档 5万 tok）",
+             f"**总平均分: {avg:.2f} / 1.00**　|　题数 {len(rows)}　|　总耗时 {total_secs}s　|　总 token {total_tokens:,}",
+             f"**维度均分**: " + "　".join(f"{d}={dim_avg[d]:.2f}" for d in dims), "",
+             "| 题号 | 题型 | 总分 | 有据 | 有源 | 覆盖 | 简洁 | 用时s | 主要问题 |",
+             "|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
-        s = r["scores"]
-        lines.append(f"| {r['id']} | {r['type']} | **{s.get('total')}** | "
-                     f"{s.get('supported')} | {s.get('sourced')} | {s.get('complete')} | "
-                     f"{s.get('concise')} | {'; '.join(s.get('issues', [])[:2])[:80]} |")
-    lines += ["\n---\n## 各题答案全文\n"]
+        sc = r["scores"]
+        lines.append(f"| {r['id']} | {r['type']} | **{sc.get('total')}** | "
+                     f"{sc.get('supported')} | {sc.get('sourced')} | {sc.get('complete')} | "
+                     f"{sc.get('concise')} | {'; '.join(sc.get('issues', [])[:2])[:90]} |")
+    lines += ["", "---", "## 各题答案全文", ""]
     for r in rows:
-        lines += [f"### {r['id']} {r['question']}\n",
-                  f"> tokens: {r['tokens']} | 用时: {r['seconds']}s\n",
+        lines += [f"### {r['id']} {r['question']}",
+                  f"> tokens {r['tokens']} · 用时 {r['seconds']}s", "",
                   r["answer"], ""]
     out = ROOT / "evals" / "results"
     out.mkdir(exist_ok=True)
     path = out / f"eval_{time.strftime('%m%d_%H%M')}.md"
-    path.write_text("\n".join(lines))
-    print(f"\n{'='*60}\n📊 总平均分 {avg:.2f} / 1.00　报告已存: {path}")
+    path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"\n📊 基线报告已存: {path}")
+    print(f"维度均分: {dim_avg}")
 
 
 if __name__ == "__main__":

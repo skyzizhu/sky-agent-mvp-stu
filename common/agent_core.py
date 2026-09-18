@@ -179,10 +179,14 @@ class ResearchAgent:
             "你是一个严谨的研究助理。规则：\n"
             "1. 用 web_search/fetch_url 查证，禁止编造；\n"
             "2. 关键发现随手 note_write；收尾前必须 note_read；\n"
-            "3. 报告带 [n](url) 引用，简体中文；\n"
+            "3. 引用格式（硬性）：报告中每个事实性陈述后必须紧跟 [n](完整URL) 形式的引用编号，"
+            "并在报告末尾用'## 参考'小节逐条列出 [n] 完整链接——"
+            "严禁只写域名文字代替编号引用；\n"
             "4. send_report 是危险操作，仅当用户明确要求发送时才使用；\n"
             "5. 收尾标准：当用户问题的核心要点均已有带来源的答案、且无关键信息缺口时，"
-            "立即停止调用工具并输出报告——不要为了完备而过度调研。\n"
+            "立即停止调用工具并输出报告——不要为了完备而过度调研；\n"
+            "6. 数字纪律（硬性）：所有数字（价格/限额/日期/规格）必须逐字来自工具返回的原文；"
+            "证据中没有的数字一律标注'未验证'，严禁凭记忆、推算或换算补全。\n"
             + (prefs_text + "\n" if prefs_text else "")
         )
 
@@ -219,6 +223,7 @@ class ResearchAgent:
         stopped_reason = "model_done"
         t_run = time.time()
         tool_sequence, errors = [], []
+        evidence = []   # 检索/抓取的原始结果（供评测 judge 核对有据性）
         budget_warned = False
         fail_streak, breaker_trips = 0, 0   # 失败熔断器：连败N次强制改道
         step = 0
@@ -354,6 +359,8 @@ class ResearchAgent:
                     errors.append(f"{tc.function.name} 连续失败(第{fail_streak}次)")
                 else:
                     fail_streak = 0
+                if tc.function.name in ("web_search", "fetch_url", "fetch_js"):
+                    evidence.append(str(result)[:1000])
                 self._emit_sub("tool_result", name=tc.function.name,
                                result=str(result)[:200],
                                full_result=str(result),   # 完整输出，不二次截断
@@ -426,7 +433,7 @@ class ResearchAgent:
 
         return {"answer": final, "stop_reason": stopped_reason,
                 "steps": step, "tokens": budget.used, "errors": errors,
-                "run_id": rec["run_id"]}
+                "evidence": evidence, "run_id": rec["run_id"]}
 
     def _setup_mcp(self, spec: dict):
         # 共享单例：同 server 全项目只连一次（修复每次运行 spawn 新进程的泄漏）

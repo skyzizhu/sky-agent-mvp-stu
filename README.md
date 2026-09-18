@@ -1,7 +1,93 @@
-# Agent MVP 学习方案（产品经理 · 干中学）
+# Sky Research Agent —— 从零手写的深度研究 Agent（附产品经理"干中学"全记录）
 
-> 目标：通过亲手做一个 MVP Agent，理解 agent 的框架、流程、节点，以及模型调用、循环、工具、上下文、多智能体等所有关键细节。
+> **一句话**：不依赖任何 Agent 框架，用原生 API 从零实现的**深度研究 Agent**——
+> 多源检索 / JS 渲染抓取 / 上下文压缩 / 外置记忆 / 人工确认 / 预算护栏 / 多智能体 / 评测与可观测，每个节点可解释、可修改、可观测。
+> 本仓库同时是一份完整的**产品经理"干中学"记录**：从第一行代码到评测调优，全过程方案、数据与踩坑保留（见下方学习路径）。
 > 方法论依据：Anthropic《Building Effective Agents》+ OpenAI《A Practical Guide to Building Agents》+ HumanLayer《12-Factor Agents》+ HuggingFace AI Agents Course。
+
+## 这是什么？
+
+一个**深度研究 Agent**：你提一个研究问题，它自主完成
+
+```
+规划(JSON大纲) → 多源检索 → 网页深读(含JS渲染) → 笔记沉淀
+→ 上下文压缩 → 交叉验证 → 带引用的结构化报告
+```
+
+全程**实时可视**（每个动作有编号、可下钻看输入输出与用时）、**有安全边界**（预算硬收尾、失败熔断、危险操作人工确认）、**可评测**（12 题 LLM-as-judge 基线 0.68 → 0.76，调优全程有数据）。
+
+它没有用任何 Agent 框架——所有机制（工具调用、循环、压缩、记忆、护栏）都是原生实现，因此**每个环节你都能看懂并能改**。
+
+## 功能特性
+
+- 🔬 **深度研究流水线**：JSON 大纲规划 → 多源检索（Tavily 优先/免费引擎降级）→ 静态+JS 渲染双抓取 → 笔记沉淀 → 带引用报告
+- 🧠 **上下文工程**：进门四步裁剪、头尾保留截断、LLM 历史压缩（compaction）、外置笔记记忆——长任务 token 被按在几千级
+- 💾 **跨会话记忆**：LLM 语义合并的偏好记忆（同义去重、冲突以新为准），越用越懂你
+- 🛡️ **安全件**：预算三水位（95% 拔工具箱硬收尾 + 笔记兜底）、危险操作人工确认（HITL）、失败熔断、 死线收敛
+- 🤖 **多智能体**：拆题 → 并行 worker → 汇总（实测 2.5x 提速），诚实验收沿责任链传导
+- 📊 **评测与可观测**：12 题 LLM-as-judge 基线、四维评分、失败归类、观测面板、层级编号执行流（每颗粒可下钻看全量输入输出与用时）
+- 🔌 **MCP 客户端**：一行配置接入外部 MCP server 工具生态（写类工具自动纳入人工确认）
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.10+（开发环境 3.12）
+- 任一支持 Tool Calling 的模型 API（本项目用 DeepSeek，OpenAI/GLM/Qwen 等兼容协议均可）
+- 可选：Node.js（MCP server 需要）、[Tavily](https://tavily.com) API key（搜索质量更好，免费额度够用）
+
+### 安装
+
+```bash
+git clone https://github.com/skyzizhu/sky-agent-mvp-stu.git
+cd sky-agent-mvp-stu
+python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+playwright install chromium                          # fetch_js 工具需要（约 150MB）
+cp .env.example .env                                 # 填入下表配置
+```
+
+### 配置 .env
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `LLM_API_KEY` | ✅ | 模型 API key |
+| `LLM_BASE_URL` | ✅ | API 地址（如 `https://api.deepseek.com`） |
+| `LLM_MODEL` | ✅ | 模型名（须支持 tool calling，如 `deepseek-flash`） |
+| `TAVILY_API_KEY` | 推荐 | 搜索质量显著提升；未配置自动降级免费引擎 |
+| `MCP_SERVERS` | 可选 | MCP server 配置（JSON 数组），接入外部工具生态 |
+| `LOW_BUDGET` | 可选 | `1` = 小预算演示模式（验证护栏行为） |
+
+## 使用方式（三种入口 + 评测）
+
+### 1️⃣ 研究工作台（推荐）
+
+```bash
+python -m uvicorn webapp.app:app --port 7870
+# 浏览器打开 http://127.0.0.1:7870
+```
+
+输入研究问题（可选四档预算：快问 2 万/标准 5 万/深度 12 万/不限）→ 实时观看层级编号执行流（每颗粒可展开看全量输入输出与用时）→ 危险操作弹窗确认 → 获得 MD 渲染的带引用报告 → 左栏历史点击可回放任意一次运行的完整过程。
+
+### 2️⃣ 命令行
+
+```bash
+python stages/08_production/production_agent.py "对比 Notion 和飞书知识库免费版的差异"
+```
+
+### 3️⃣ 交互实验室
+
+```bash
+python -m uvicorn playground.app:app --port 7860
+# 表单构造任意请求，看模型返回的原始 JSON——学习 tool_calls/finish_reason/usage 的最佳场所
+```
+
+### 4️⃣ 评测基线
+
+```bash
+python evals/run_eval.py --n 3    # 快速验证
+python evals/run_eval.py          # 全量 12 题（正式基线）
+```
 
 ## 📚 核心文档导航（学习材料体系）
 

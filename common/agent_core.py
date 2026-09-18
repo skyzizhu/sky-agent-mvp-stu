@@ -178,7 +178,9 @@ class ResearchAgent:
             "1. 用 web_search/fetch_url 查证，禁止编造；\n"
             "2. 关键发现随手 note_write；收尾前必须 note_read；\n"
             "3. 报告带 [n](url) 引用，简体中文；\n"
-            "4. send_report 是危险操作，仅当用户明确要求发送时才使用。\n"
+            "4. send_report 是危险操作，仅当用户明确要求发送时才使用；\n"
+            "5. 收尾标准：当用户问题的核心要点均已有带来源的答案、且无关键信息缺口时，"
+            "立即停止调用工具并输出报告——不要为了完备而过度调研。\n"
             + (prefs_text + "\n" if prefs_text else "")
         )
 
@@ -222,6 +224,17 @@ class ResearchAgent:
 
         for step in range(1, config.MAX_LOOP_STEPS + 1):
             self._step_cur, self._sub = step, 0   # 每步重置子序号
+            # ★ 进度状态条：让模型感知步数与预算水位（此前这两个维度它完全感知不到，
+            #   导致前期漫无节制、后期被死线突然叫停）。每轮注入一行，成本可忽略。
+            if budget.max is not None:
+                status = (f"[系统进度] 第 {step}/{config.MAX_LOOP_STEPS} 步 · "
+                          f"token 已用 {budget.used}/{budget.max}")
+                if budget.near_limit(0.8):
+                    status += " · 预算偏紧：请收敛调研范围，优先补关键缺口"
+            else:
+                status = f"[系统进度] 第 {step}/{config.MAX_LOOP_STEPS} 步 · 预算不限"
+            self._emit_sub("progress", text=status)
+            messages.append({"role": "user", "content": status})
             # 中止检查（用户点了⏹）：注入一次收尾指令
             if self.stop_check() and not self._wrap_injected:
                 self._wrap_injected = True

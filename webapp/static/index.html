@@ -275,6 +275,8 @@ function renderEvent(ev, live){
 
     case 'inject':
       addSub(sub, `⚠️ ${esc(ev.note)}`); break;
+    case 'progress':
+      addSub(sub, `📊 ${esc(ev.text)}`); break;
     case 'budget':
       addSub(sub, `⚠️ ${esc(ev.note || '预算接近上限，注入收尾指令')}（${ev.used}/${ev.max}）`); break;
     case 'breaker':

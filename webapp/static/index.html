@@ -260,7 +260,7 @@ function renderEvent(ev, live){
         `🧠 模型调用 → ` +
         (ev.tools.length ? `工具调用 <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
         msBadge(ev.model_ms),
-        `<b>① 给到模型的完整输入（messages 全量，零删减，共 ${ev.total_messages} 条）</b>` +
+        `<b>① 给到模型的完整输入（请求体全量：messages ${ev.total_messages} 条 + tools 说明书，零删减）</b>` +
         `<pre>${esc(JSON.stringify(mi, null, 1))}</pre>` +
         `<b>② 模型的完整输出（全字段，key 和 value 一个不落）</b>：` +
         `<pre>${esc(JSON.stringify(mo, null, 1))}</pre>` +

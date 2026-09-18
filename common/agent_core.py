@@ -260,7 +260,9 @@ class ResearchAgent:
                                note="预算接近上限，注入收尾指令")
 
             t_model = time.time()
-            model_input = [_as_plain(m) for m in messages]   # ★ 完整输入快照（发给模型的全部内容）
+            model_input = {"messages": [_as_plain(m) for m in messages],   # ★ 完整输入快照：对话历史
+                           "tools": all_tools}                              # ★ 工具说明书（模型点菜的依据）
+            n_msg = len(model_input["messages"])
             try:
                 msg, usage = call_llm(client, messages, tools=all_tools)
             except Exception as e:
@@ -281,9 +283,9 @@ class ResearchAgent:
             self._emit_sub("step", step=step,
                       tools=[tc.function.name for tc in (msg.tool_calls or [])],
                       prompt_tokens=usage.prompt_tokens,
-                      model_ms=model_ms, total_messages=len(model_input),
+                      model_ms=model_ms, total_messages=n_msg,
                       detail={
-                          "model_input": model_input,          # ★ 完整 messages（零删减）
+                          "model_input": model_input,          # ★ 完整请求体（messages+tools，零删减）
                           "model_output": msg.model_dump(),     # ★ 模型返回的全字段
                           "token_detail": {"prompt": usage.prompt_tokens,
                                            "completion": usage.completion_tokens,

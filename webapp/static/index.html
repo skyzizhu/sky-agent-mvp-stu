@@ -246,7 +246,10 @@ function renderEvent(ev, live){
       addSub(sub, `🧠 载入 <b>${ev.count}</b> 条长期偏好`,
         ev.text ? `<pre>${esc(ev.text)}</pre>` : ''); break;
     case 'guardrail':
-      addSub(sub, `🛡️ 预算 <b>${Number(ev.max).toLocaleString()}</b> tok`); break;
+      addSub(sub,
+        `🛡️ 预算 <b>${Number(ev.max).toLocaleString()}</b> tok`,
+        `<b>危险工具清单（执行前需人工确认）</b>：<pre>${esc(JSON.stringify(ev.dangerous, null, 1))}</pre>` +
+        `<b>其他边界</b>：步数上限 20 步 · 上下文超限自动摘要压缩 · 死线注入于倒数第 2 步`); break;
     case 'mcp':
       addSub(sub, `🔌 ${esc(ev.msg)}`); break;
 
@@ -310,15 +313,22 @@ function renderEvent(ev, live){
       $('approval_text').textContent = `${ev.tool}(${ev.args.slice(0,80)}) —— ${ev.reason}`;
       lastApprovalLi = addSub(sub,
         live ? `⚠️ <b>等待人工确认</b>：${ev.tool}`
-             : `⚠️ 人工确认：${ev.tool}`, '', 'approval');
+             : `⚠️ 人工确认：${ev.tool}`,
+        `<b>危险原因</b>：${esc(ev.reason || '')}<br>` +
+        `<b>完整参数</b>：<pre>${esc(ev.args)}</pre>`, 'approval');
       break;
     case 'approval_result':
       $('approval').style.display = 'none';
+      const verdict = ev.approved ? '✅ 已批准' : '❌ 已拒绝';
+      const color = ev.approved ? '#188554' : '#c93c37';
       if (lastApprovalLi && lastApprovalLi.dataset.sub === sub) {
         lastApprovalLi.innerHTML +=
-          ` <b style="color:${ev.approved?'#188554':'#c93c37'}">→ ${ev.approved?'✅ 已批准':'❌ 已拒绝'}</b>`;
+          ` <b style="color:${color}">→ ${verdict}</b>`;
       } else {
-        addSub(sub, `${ev.approved?'✅ 已批准':'❌ 已拒绝'}：${ev.tool}`);
+        addSub(sub, `${verdict}：${ev.tool}`);
+      }
+      if (ev.receipt) {
+        addSub(sub + `.r`, `📜 喂回给模型的回执`, `<pre>${esc(ev.receipt)}</pre>`);
       }
       break;
 
@@ -332,6 +342,11 @@ function renderEvent(ev, live){
                      : '（本轮无回填明细数据）');
       break;
     }
+    case 'memory_saved':
+      addStandalone('memory_extract',
+        `💾 记忆已保存：新增 <b>${ev.added}</b> 条 → memory.json`,
+        `<b>最终记忆列表</b>：<pre>${esc(JSON.stringify(ev.facts, null, 1))}</pre>`);
+      break;
     case 'memory_extract':
       addStandalone('memory_extract',
         `🧠 会话结束：记忆提取 → <b>${ev.count}</b> 条候选偏好` + msBadge(ev.ms),
@@ -339,6 +354,11 @@ function renderEvent(ev, live){
         `<b>输出（提取出的偏好）</b>：<pre>${esc(JSON.stringify(ev.prefs, null, 1))}</pre>`);
       break;
 
+    case 'forced_final':
+      addStandalone('final',
+        `🧾 强制结题调用完成（${ev.ms}ms）——若主报告缺失，以下为其输出`,
+        `<pre>${esc(ev.output || '')}</pre>`);
+      break;
     case 'final':
       $('budget_text').textContent = ev.max
         ? `${ev.used.toLocaleString()} / ${ev.max.toLocaleString()} tok`

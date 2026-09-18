@@ -312,6 +312,8 @@ class ResearchAgent:
                     final = fmsg.content or final
                 except Exception as e:
                     errors.append(f"budget_hard_stop: {type(e).__name__}: {str(e)[:150]}")
+                    self.emit("forced_final", ms=round((time.time() - t_fin) * 1000),
+                              output="", error=f"{type(e).__name__}: {str(e)[:150]}")
                 stopped_reason = "budget_hard_stop"
                 break
 
@@ -337,7 +339,8 @@ class ResearchAgent:
                     approved, receipt = self.approver(tc.function.name,
                                                       tc.function.arguments)
                     self.emit("approval_result", sub=self._approval_sub,
-                              tool=tc.function.name, approved=approved)
+                              tool=tc.function.name, approved=approved,
+                              receipt=receipt)
                     receipt_msg = {"role": "tool", "tool_call_id": tc.id,
                                    "content": receipt}
                     messages.append(receipt_msg)
@@ -398,7 +401,9 @@ class ResearchAgent:
                 fmsg, fusage = call_llm(client, messages)  # 不带 tools，杜绝再点菜
                 budget.add(fusage)
                 final = fmsg.content or final
-                self.emit("forced_final", ms=round((time.time() - t_fin) * 1000))
+                self.emit("forced_final", ms=round((time.time() - t_fin) * 1000),
+                          output=(fmsg.content or "")[:400],
+                          input_note=FORCED_FINAL_MSG)
             except Exception as e:
                 errors.append(f"forced_final: {e}")
             # 最后兜底：结题调用失败时，把笔记原文作为报告输出（信息不能跟着丢）
@@ -421,7 +426,8 @@ class ResearchAgent:
                   transcript=transcript,
                   ms=round((time.time() - t_mem) * 1000))
         added = memory.merge(new_prefs, client=client)
-        self.emit("memory_saved", added=added)
+        self.emit("memory_saved", added=added,
+                  facts=[f["text"] for f in memory.data["facts"]])
 
         rec = log_run(run_id=self.run_id, impl=self.impl,
                       question=question[:80], steps=step,

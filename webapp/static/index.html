@@ -34,6 +34,10 @@
            font-size:13px; color:#fff; background:var(--acc); }
   button:disabled { opacity:.45; cursor:not-allowed; }
   button.ghost { background:#fff; color:var(--err); border:1px solid var(--line); }
+  button.rbtn { background:#fff; color:#333c52; border:1px solid var(--line);
+                padding:4px 10px; font-size:11.5px; border-radius:6px; }
+  button.rbtn:hover:not(:disabled) { color:var(--acc); border-color:var(--acc); }
+  button.rbtn:disabled { opacity:.45; cursor:not-allowed; }
   #timeline { margin-top:6px; }
   .ev { border:1px solid var(--line); border-left:3px solid var(--acc); border-radius:8px;
         padding:7px 11px; margin:7px 0; font-size:12.5px; background:#fbfcfe; }
@@ -138,7 +142,13 @@
     </div>
 
     <div class="panel" style="margin-top:14px;display:none" id="report_panel">
-      <h2>最终报告</h2>
+      <h2 style="display:flex;align-items:center;justify-content:space-between;">
+        <span>最终报告</span>
+        <span style="display:flex;gap:8px;">
+          <button class="rbtn" id="copybtn" onclick="copyMd()" disabled>📋 复制 MD</button>
+          <button class="rbtn" id="dlbtn" onclick="downloadMd()" disabled>⬇ 下载 .md</button>
+        </span>
+      </h2>
       <div class="report md" id="report"></div>
     </div>
   </div>
@@ -370,6 +380,7 @@ function renderEvent(ev, live){
         `🏁 研究完成（${ev.steps} 步 · ${ev.used.toLocaleString()} tok · ${ev.stop_reason}` +
         `${ev.total_ms!=null ? ' · 总耗时 '+(ev.total_ms/1000).toFixed(1)+'s' : ''}）`);
       if (ev.answer) {
+        lastReportMd = ev.answer;   // 保存 Markdown 原文（下载/复制用）
         const safe = esc(ev.answer);
         if (typeof marked !== 'undefined') {
           $('report').innerHTML = marked.parse(safe);
@@ -380,6 +391,7 @@ function renderEvent(ev, live){
         $('report_panel').style.display = '';
         $('report_panel').scrollIntoView({block:'start'});
       }
+      setReportButtons(!!lastReportMd);
       break;
     case 'done':
       if (live) { es.close(); $('start').disabled = false; $('stopbtn').disabled = true; loadHistory(); }
@@ -387,6 +399,38 @@ function renderEvent(ev, live){
     case 'error':
       addStandalone('approval', `❌ 运行错误：${esc(ev.message)}`); break;
   }
+}
+
+// ---------- 报告下载 / 复制 ----------
+function setReportButtons(enabled){
+  $('copybtn').disabled = !enabled;
+  $('dlbtn').disabled = !enabled;
+}
+function downloadMd(){
+  if (!lastReportMd) { alert('暂无报告内容'); return; }
+  const p = n => String(n).padStart(2,'0');
+  const d = new Date();
+  const name = `research_report_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.md`;
+  const blob = new Blob([lastReportMd], {type:'text/markdown;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+async function copyMd(){
+  if (!lastReportMd) { alert('暂无报告内容'); return; }
+  const btn = $('copybtn'), old = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(lastReportMd);
+    btn.textContent = '✅ 已复制';
+  } catch(e) {
+    const ta = document.createElement('textarea');   // 非安全上下文兜底
+    ta.value = lastReportMd; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+    btn.textContent = '✅ 已复制';
+  }
+  setTimeout(() => { btn.textContent = '📋 复制 MD'; }, 1500);
 }
 
 // ---------- 实时运行 ----------
@@ -398,6 +442,7 @@ async function start(){
   $('start').disabled = true; $('stopbtn').disabled = false;
   resetTimeline();
   $('report_panel').style.display = 'none';
+  lastReportMd = ''; setReportButtons(false);   // 新研究开始：清空报告原文与按钮态
   const r = await fetch('/api/research', {method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({question:q, tier})});

@@ -106,6 +106,19 @@ REAL_TOOLS = [
 ]
 
 
+def smart_truncate(text: str, limit: int, tail_ratio: float = 0.3) -> str:
+    """头尾保留截断：定价表/页脚/联系方式等高价值信息常在页面中后部，
+    纯头部截断会切掉。保留前 (1-tail_ratio) 与尾部，中间以标记衔接。"""
+    if len(text) <= limit:
+        return text
+    marker = "\n……[中间内容已截断]……\n"
+    head = int(limit * (1 - tail_ratio)) - len(marker)
+    tail = limit - head - len(marker)
+    if tail <= 0:
+        return text[:limit]
+    return text[:head] + marker + text[-tail:]
+
+
 def _tavily_search(query: str) -> list | None:
     """Tavily 搜索（付费，质量高速度快）。未配 key 返回 None 走降级。"""
     key = config.TAVILY_API_KEY
@@ -156,7 +169,11 @@ def web_search(query: str) -> str:
          "snippet": (r.get("body") or "")[:300]}
         for r in results
     ]
-    return json.dumps(trimmed, ensure_ascii=False)[:config.MAX_TOOL_RESULT_CHARS]
+    dump = json.dumps(trimmed, ensure_ascii=False)
+    while len(dump) > config.MAX_TOOL_RESULT_CHARS and len(trimmed) > 1:
+        trimmed.pop()   # 丢末尾条目保 JSON 结构合法，而不是拦腰切断
+        dump = json.dumps(trimmed, ensure_ascii=False)
+    return dump
 
 
 def fetch_url(url: str) -> str:
@@ -172,9 +189,9 @@ def fetch_url(url: str) -> str:
     text = trafilatura.extract(resp.text) or ""
     if not text:
         return "错误：该网页没有可提取的正文(可能是纯视频/需要登录)。请换其他链接。"
-    text = text[:config.MAX_TOOL_RESULT_CHARS]
+    text = smart_truncate(text, config.MAX_TOOL_RESULT_CHARS)   # 头尾保留：页脚定价不再被切
     return json.dumps({"url": url, "content": text,
-                       "note": f"正文已截断至{len(text)}字符，如需更多细节请告诉我具体要找什么"},
+                       "note": f"正文头尾保留截断至{len(text)}字符，中间缺失如需请告知"},
                       ensure_ascii=False)
 
 
@@ -212,9 +229,9 @@ def fetch_js(url: str, wait_ms: int = 4000) -> str:
     text = __import__("re").sub(r"\n{3,}", "\n\n", (text or "").strip())
     if not text:
         return "错误：渲染后页面仍无文本内容。请换其他来源。"
-    return json.dumps({"url": url, "title": title, "content": text[:config.MAX_TOOL_RESULT_CHARS],
-                       "note": "JS渲染后提取（含页脚），已截断"}, ensure_ascii=False
-                      )[:config.MAX_TOOL_RESULT_CHARS]
+    body = smart_truncate(text, config.MAX_TOOL_RESULT_CHARS)
+    return json.dumps({"url": url, "title": title, "content": body,
+                       "note": "JS渲染后提取（含页脚），头尾保留截断"}, ensure_ascii=False)
 
 
 REGISTRY.update({"web_search": web_search, "fetch_url": fetch_url})
@@ -266,7 +283,7 @@ def note_read(dummy: str = "") -> str:
     if not notes or not _P(notes).exists():
         return "笔记为空。请先用 note_write 记录关键发现。"
     text = _P(notes).read_text(encoding="utf-8")
-    return text[:config.MAX_TOOL_RESULT_CHARS]
+    return smart_truncate(text, config.MAX_TOOL_RESULT_CHARS)
 
 
 NOTE_TOOLS = [

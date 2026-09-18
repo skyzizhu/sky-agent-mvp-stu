@@ -245,7 +245,7 @@ function renderEvent(ev, live){
       const mo = d.model_output || {};
       addSub(sub,
         `🧠 模型调用 → ` +
-        (ev.tools.length ? `点菜 <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
+        (ev.tools.length ? `工具调用 <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
         msBadge(ev.model_ms),
         `<b>① 给到模型的完整输入（messages 全量，零删减，共 ${ev.total_messages} 条）</b>` +
         `<pre>${esc(JSON.stringify(mi, null, 1))}</pre>` +

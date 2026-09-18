@@ -192,7 +192,7 @@ agent-mvp-stu/
 ### Stage 1：Function Calling 单步（1 天）
 
 - **做**：定义 2 个玩具工具（如 `get_weather`、`calculator`），模型返回 `tool_calls` 后由你的代码执行，把结果以 `role: tool` 消息喂回去，让模型给出最终回答。**只做一次调用链，还不写循环。**
-- **学**：工具 = JSON Schema 声明 + 模型输出结构化 JSON + 你的确定性代码执行——"工具只是结构化输出"（12-Factor #4）；模型不是真的"执行"，它只是"点菜"。
+- **学**：工具 = JSON Schema 声明 + 模型输出结构化 JSON + 你的确定性代码执行——"工具只是结构化输出"（12-Factor #4）；模型不是真的"执行"，它只是输出"调用声明"。
 - **阅读**：你所用模型的 function calling 文档；Anthropic《Writing Effective Tools》。
 - **验收**：能解释"模型为什么决定调用工具"（因为你在请求里给了 tools 声明）。
 

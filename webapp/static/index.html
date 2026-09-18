@@ -323,9 +323,12 @@ function renderEvent(ev, live){
       break;
 
     case 'final':
-      $('budget_text').textContent = ev.used.toLocaleString() + ' tok';
-      $('budget_fill').style.width =
-        Math.min(100, Math.round(ev.used / ev.max * 100)) + '%';
+      $('budget_text').textContent = ev.max
+        ? `${ev.used.toLocaleString()} / ${ev.max.toLocaleString()} tok`
+        : `${ev.used.toLocaleString()} tok（不限档）`;
+      $('budget_fill').style.width = ev.max
+        ? Math.min(100, Math.round(ev.used / ev.max * 100)) + '%'
+        : '0%';
       addStandalone('final',
         `🏁 研究完成（${ev.steps} 步 · ${ev.used.toLocaleString()} tok · ${ev.stop_reason}` +
         `${ev.total_ms!=null ? ' · 总耗时 '+(ev.total_ms/1000).toFixed(1)+'s' : ''}）`);

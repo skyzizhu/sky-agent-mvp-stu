@@ -22,10 +22,12 @@ DANGEROUS_TOOLS = {
 
 
 class Budget:
-    """token 预算。用真实计费值（usage）记账。"""
+    """token 预算。用真实计费值（usage）记账。
+    max_total_tokens=None 表示不限额度：水位永不触发，
+    但步数上限/死线注入/熔断器等控制仍然生效（不限 ≠ 失控）。"""
 
-    def __init__(self, max_total_tokens: int):
-        self.max = max_total_tokens
+    def __init__(self, max_total_tokens: int | None):
+        self.max = max_total_tokens   # None = 不限额
         self.used = 0
 
     def add(self, usage) -> int:
@@ -34,14 +36,16 @@ class Budget:
 
     @property
     def exhausted(self) -> bool:
-        return self.used >= self.max
+        return self.max is not None and self.used >= self.max
 
     @property
-    def remaining(self) -> int:
+    def remaining(self) -> int | None:
+        if self.max is None:
+            return None
         return max(0, self.max - self.used)
 
     def near_limit(self, ratio: float = 0.8) -> bool:
-        return self.used >= self.max * ratio
+        return self.max is not None and self.used >= self.max * ratio
 
 
 def approval_required(tool_name: str) -> bool:

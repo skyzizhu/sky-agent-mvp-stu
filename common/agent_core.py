@@ -139,14 +139,18 @@ def _dump_structure(messages: list, rec_hint: str):
 class ResearchAgent:
     """生产研究 agent 内核：逻辑与 Stage 8 完全一致，IO 可注入。"""
 
+    _DEFAULT = object()   # 哨兵：区分"未传"与"显式不限"
+
     def __init__(self, emit=None, approver=None, stop_check=None,
-                 budget_max=None, use_mcp=False, impl="agent_core"):
+                 budget_max=_DEFAULT, use_mcp=False, impl="agent_core"):
         self.emit = emit or _cli_emit
         self.approver = approver or _cli_approver
         self.stop_check = stop_check or (lambda: False)
-        self.budget_max = budget_max or (
-            3000 if os.getenv("LOW_BUDGET")
-            else config.BUDGET_TIERS.get(config.DEFAULT_BUDGET_TIER, 30000))
+        if budget_max is self._DEFAULT:   # 未指定 → 默认档（LOW_BUDGET 演示优先）
+            budget_max = (3000 if os.getenv("LOW_BUDGET")
+                          else config.BUDGET_TIERS.get(config.DEFAULT_BUDGET_TIER, 30000))
+        self.budget_max = budget_max      # ★ 必须存回实例：run() 里要用
+        # budget_max=None 保持 None → Budget 不限额模式
         self.use_mcp = use_mcp
         self.impl = impl
         self.stop_reason = "model_done"

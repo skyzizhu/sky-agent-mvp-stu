@@ -128,7 +128,7 @@ def start_research(body: ResearchIn):
     run_id = uuid.uuid4().hex[:8]
     budget_max = (3000 if os.getenv("LOW_BUDGET")
                   else config.BUDGET_TIERS.get(body.tier,
-                       config.BUDGET_TIERS["standard"]))
+                       config.BUDGET_TIERS["standard"]))   # unlimited 档在配置里为 None
     agent = ResearchAgentWeb(run_id, impl="webapp",
                              use_mcp=os.getenv("MCP_FS") == "1",
                              budget_max=budget_max,

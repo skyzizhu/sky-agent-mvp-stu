@@ -63,3 +63,12 @@
 - 工具颗粒：完整输出不再二次截断（源端 MAX_TOOL_RESULT_CHARS 裁剪仍生效）
 - 教训：前端脚本反复改，本会话已三次"改A碰坏B"（tier 绑定丢失/msBadge 误删/
   loadHistory 漏调用）——小步提交 + 浏览器实测，缺一不可
+
+
+## 不限额度档（2026-09-17 追加3）
+- 第四档 unlimited：BUDGET_TIERS 里为 None；Budget 支持不限额（水位永不触发）
+- 不限 ≠ 失控：步数上限/死线注入/熔断器/中止按钮全部仍然生效
+- agent_core：budget_max 用哨兵对象区分"未传"（走默认档）与"显式 None"（不限）
+  ——踩坑：__init__ 解析后忘了存回 self.budget_max → AttributeError（已修）
+- 前端：第四个 chip「深度+ · 不限额度」；不限档仪表显示已用 token、无百分比
+- 教训：测试环境变量（LOW_BUDGET）会覆盖被测配置——验证前先清环境

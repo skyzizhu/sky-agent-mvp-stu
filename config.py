@@ -27,7 +27,8 @@ COMPACT_KEEP_RECENT = 6
 
 
 # Stage 11：预算档位（快问/标准/深度）——按任务类型选，而非全局一刀切
-BUDGET_TIERS = {"quick": 20000, "standard": 50000, "deep": 120000}
+BUDGET_TIERS = {"quick": 20000, "standard": 50000, "deep": 120000,
+                "unlimited": None}   # None = 不限 token（步数/死线/熔断仍生效）
 DEFAULT_BUDGET_TIER = "standard"
 
 # Stage 11：搜索源配置（可选）。配置 TAVILY_API_KEY 后自动用 Tavily 优先，

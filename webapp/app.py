@@ -24,7 +24,8 @@ EV_DIR = ROOT / "logs" / "events"          # 每次运行的事件存档（可�
 from common.guardrails import DANGEROUS_TOOLS
 from common.observability import load_runs
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+
 from pydantic import BaseModel
 
 app = FastAPI(title="Agent Research Workbench")
@@ -184,10 +185,10 @@ def stop(run_id: str):
 
 @app.get("/api/runs/{run_id}/events")
 def run_events(run_id: str):
-    """历史运行的事件回放数据（含 final 事件里的报告全文）。"""
+    """历史运行的事件回放数据（含 final 事件里的报告全文 + RunLog 元信息）。"""
     p = EV_DIR / f"events_{run_id}.jsonl"
     if not p.exists():
-        return {"events": []}
+        return {"events": [], "meta": {}}
     events = []
     for line in p.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -196,7 +197,25 @@ def run_events(run_id: str):
                 events.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    return {"events": events}
+    # 从 RunLog 取元信息
+    meta = {}
+    runs_file = ROOT / "logs" / "runs.jsonl"
+    if runs_file.exists():
+        for rl in runs_file.read_text(encoding="utf-8").splitlines():
+            rl = rl.strip()
+            if not rl:
+                continue
+            try:
+                rec = json.loads(rl)
+                if rec.get("run_id") == run_id:
+                    meta = {"question": rec.get("question",""),
+                            "ts": rec.get("ts",""), "impl": rec.get("impl",""),
+                            "stop_reason": rec.get("stop_reason",""),
+                            "tokens": rec.get("tokens", 0)}
+                    break
+            except json.JSONDecodeError:
+                continue
+    return {"events": events, "meta": meta}
 
 
 @app.get("/api/runs")

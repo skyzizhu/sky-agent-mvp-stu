@@ -15,6 +15,7 @@ Stage 4 核心节点：上下文压缩（Compaction）。
 import json
 
 import config
+from common.llm_client import call_llm
 
 
 def render_messages_for_summary(messages: list) -> str:
@@ -80,9 +81,8 @@ def compact_messages(client, messages: list,
         {"role": "user",
          "content": render_messages_for_summary(old)},
     ]
-    resp = client.chat.completions.create(model=config.MODEL,
-                                          messages=summary_prompt)
-    summary = resp.choices[0].message.content
+    msg, usage = call_llm(client, summary_prompt)
+    summary = msg.content or ""
 
     new_messages = []
     if system:
@@ -99,9 +99,12 @@ def compact_messages(client, messages: list,
              "purpose": "对抗context rot与token成本：旧历史有损压缩，事实由笔记兜底",
              # ★ 全量 IO：交给摘要模型的完整输入 + 摘要模型的完整输出
              "summarizer_input": render_messages_for_summary(old),
-             "summarizer_output": summary}
+             "summarizer_output": summary,
+             "usage": usage,
+             "tokens": usage.total_tokens if usage else 0}
     new_messages.extend(recent)
     return new_messages, summary, stats
+
 
 
 def maybe_compact(client, messages: list, prompt_tokens: int) -> tuple[list, str | None, dict | None]:
@@ -109,3 +112,40 @@ def maybe_compact(client, messages: list, prompt_tokens: int) -> tuple[list, str
     if prompt_tokens > config.MAX_CONTEXT_TOKENS:
         return compact_messages(client, messages)
     return messages, None, None
+
+
+# ---------- 单页即时萃取（Map 阶段） ----------
+PAGE_EXTRACT_THRESHOLD = 800  # 正文超过 800 字符触发即时萃取
+
+
+def extract_page_facts(client, raw_text: str, goal: str = "") -> tuple[str, any]:
+    """
+    单页即时萃取（Map-Reduce 范式之 Map 阶段）：
+    将 2000~4000 字的长网页提炼为 250~450 字的高纯度事实/数据要点，
+    大幅降低长文倾倒对主 Agent 上下文的冲击。
+    返回: (extracted_text, usage)
+    """
+    if not raw_text or len(raw_text) <= PAGE_EXTRACT_THRESHOLD or client is None:
+        return raw_text, None
+
+    goal_prompt = f"【当前调研课题】：{goal}\n\n" if goal else ""
+    prompt = [
+        {"role": "system",
+         "content": "你是一个严谨的研究速读助理。你的任务是从网页提取高信噪比的核心要点。\n"
+                    "【提取硬性规则】：\n"
+                    "1. 提取所有关键事实、具体数据（价格、数字、限额、时间、规格、百分比）；\n"
+                    "2. 提取与调研目标相关的核心结论、业务模式与产品功能，彻底剔除免责声明、导航栏残留、版权说明及无关客套话；\n"
+                    "3. 严格忠于原文，严禁任何脑补或主观推论；证据中不确定的如实保留；\n"
+                    "4. 输出为 Markdown 清晰要点列表（≤400字）。"},
+        {"role": "user",
+         "content": f"{goal_prompt}【网页正文原文】：\n{raw_text[:6000]}"}
+    ]
+    try:
+        msg, usage = call_llm(client, prompt)
+        extracted = (msg.content or "").strip()
+        if len(extracted) >= 20:
+            return extracted, usage
+    except Exception:
+        pass
+    # 异常或提取过短时降级返回原文
+    return raw_text, None

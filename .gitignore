@@ -1,5 +1,12 @@
 .env
 __pycache__/
 *.pyc
-traces/*.json
 .venv/
+*.log
+
+# 运行时数据（含个人研究内容/偏好，不进开源仓库）
+logs/
+traces/
+notes/agent_memory/
+notes/memory.json
+notes/memory_test.json

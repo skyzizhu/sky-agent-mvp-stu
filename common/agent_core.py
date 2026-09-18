@@ -12,6 +12,7 @@ Stage 11：Agent 可注入内核（事件化改造的产物）。
 """
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -38,12 +39,21 @@ def _cli_emit(type: str, **p):
         print(f"[MCP] {p['msg']}")
     elif type == "guardrail":
         print(f"[护栏] token 预算: {p['max']} | 危险工具: {p['dangerous']}")
+    elif type == "plan":
+        sub_qs = p.get("sub_questions") or []
+        print(f"[规划] 目标: {p.get('goal', '')} ({len(sub_qs)} 个子问题)")
+        for sq in sub_qs:
+            print(f"      - [{sq.get('id', '')}] {sq.get('q', '')} (查证: {sq.get('what_to_verify', '')})")
+
     elif type == "step":
         print(f"    [第{p['step']}步] " +
               (f"点菜: {','.join(p['tools'])}" if p["tools"] else "✍️ 输出最终报告")
               + f" (输入{p['prompt_tokens']}tok)")
     elif type == "tool_result":
-        print(f"      ↳ {p['name']} → {str(p['result'])[:120]}")
+        hit_mark = " ⚡[命中缓存/去重]" if p.get("cache_hit") else ""
+        extract_mark = f" 📄[萃取提纯-{p.get('extract_ratio')}%]" if p.get("extracted") else ""
+        fallback_mark = " 🌐[自动降级JS渲染]" if p.get("auto_fallback") else ""
+        print(f"      ↳ {p['name']}{hit_mark}{extract_mark}{fallback_mark} → {str(p['result'])[:120]}")
     elif type == "compact":
         print(f"   ★ 压缩: 上下文 {p['before']}→{p['after']} 字符")
     elif type == "budget":
@@ -51,6 +61,14 @@ def _cli_emit(type: str, **p):
         print(f"   [护栏] {note}（{p['used']}/{p['max'] if p['max'] is not None else '不限'} tok）")
     elif type == "breaker":
         print(f"   [熔断] {p['note']}")
+    elif type == "checklist":
+        completed = p.get("completed", 0)
+        total = p.get("total", 0)
+        print(f"   📌 [看板更新] 已核销 {completed}/{total} 个子问题")
+        for it in (p.get("items") or []):
+            st = "✅" if it["status"] == "completed" else ("⏳" if it["status"] == "in_progress" else "⚪")
+            summary_info = f" (结论: {it['summary']})" if it.get("summary") else ""
+            print(f"      {st} [子问题{it['id']}] {it['q']}{summary_info}")
     elif type == "error":
         print(f"   [错误] {p['message']}")
     elif type == "memory_extract":
@@ -92,10 +110,60 @@ CIRCUIT_BREAKER_MSG = ("⚠️ 工具已连续失败多次。禁止再用相同�
                        "立即基于【已有信息】输出阶段性结论（如实标注未获取到的部分），"
                        "不要浪费剩余预算继续尝试。")
 
+def _build_forced_final_msg() -> str:
+    """构建强制结题指令：由代码主动从磁盘提取调研笔记全文嵌入 Prompt，
+    消除模型因'收尾前必须 note_read'而尝试输出裸 DSML 工具调用的动机。"""
+    notes_p = tools_mod._current_notes_file()
+    notes_text = ""
+    if notes_p and Path(notes_p).exists():
+        notes_text = Path(notes_p).read_text(encoding="utf-8").strip()
+
+    msg = "【系统指令：预算或步数已达上限，立即终止调研并结题】\n\n"
+    if notes_text:
+        msg += (
+            f"系统已为你自动提取了此前记录的全部调研笔记全文如下：\n"
+            f"```markdown\n{notes_text}\n```\n\n"
+        )
+    else:
+        msg += "（此前未记录到有效调研笔记）\n\n"
+
+    msg += (
+        "硬性指示：\n"
+        "1. 笔记已在上方完整给出，无需且【严禁】调用 note_read 或任何工具；\n"
+        "2. 【严禁】输出任何 <｜｜DSML｜｜>、<tool_call> 等标签或调用代码；\n"
+        "3. 请直接依据上述笔记，整理并输出《阶段性结题报告》Markdown 全文：\n"
+        "   - 已确认的核心事实与数据（严格依据笔记，附带来源链接/域名）；\n"
+        "   - 尚未查清的遗留事项与缺口；\n"
+        "   - 一句话结论，并在末尾说明若继续研究建议下一步查什么。"
+    )
+    return msg
+
+
+def _clean_report(text: str) -> str:
+    """清洗报告中的残留模型内部调用标记（如 DeepSeek DSML 标签）。"""
+    if not text:
+        return ""
+    # 清理所有包含 ｜｜ 的标签，例如 <｜｜DSML｜｜ calls>、</｜｜DSML｜｜ invoke>
+    t = re.sub(r"<[^>\n]*｜｜[^>\n]*>", "", text)
+    # 清理标准的 tool_call 标签
+    t = re.sub(r"<[/]?(?:tool_call|invoke)[^>\n]*>", "", t)
+    return t.strip()
+
+
+def _is_invalid_report(text: str) -> bool:
+    """检查输出是否为无效报告（例如仅包含 DSML 标签、空文本或工具调用代码片段）。"""
+    if not text or not text.strip():
+        return True
+    clean = _clean_report(text)
+    # 若清洗后有效字符不足 30 字，视为无效输出
+    return len(clean.strip()) < 30
+
+
 FORCED_FINAL_MSG = ("预算或步数已用尽，立即结束调研。请基于已有笔记输出《阶段性结题报告》："
                     "1) 已确认的发现（带来源域名）；2) 未能获取的信息；3) 一句话结论；"
                     "4) 末尾用一段话说明'若继续研究，建议下一步查什么'。"
                     "不要再调用任何工具。")
+
 
 
 
@@ -159,6 +227,9 @@ class ResearchAgent:
         self.stop_reason = "model_done"
         self._wrap_injected = False
         self.run_id = run_id   # 外部传入则沿用（Web 工作台），否则自生成
+        self.checklist = []
+        self._step_cur = 0
+        self._sub = 0
 
     # ---------- 主流程（逻辑与 Stage 8 逐行对应） ----------
     def _emit_sub(self, type: str, **p):
@@ -167,14 +238,71 @@ class ResearchAgent:
         p["sub"] = f"{self._step_cur}.{self._sub}"
         self.emit(type, **p)
 
+    def format_checklist_for_prompt(self) -> str:
+        """生成供 LLM 当前轮感知的大纲待办核销看板。"""
+        if not self.checklist:
+            return ""
+        lines = ["【研究进度待办看板】"]
+        for item in self.checklist:
+            mark = "[x]" if item["status"] == "completed" else ("[~]" if item["status"] == "in_progress" else "[ ]")
+            status_desc = f"(已完成: {item['summary']})" if item["status"] == "completed" and item["summary"] else (
+                "(正在查证...)" if item["status"] == "in_progress" else "(待查证)"
+            )
+            lines.append(f"- {mark} 子问题 {item['id']}: {item['q']} {status_desc}")
+
+        completed_cnt = sum(1 for it in self.checklist if it["status"] == "completed")
+        total_cnt = len(self.checklist)
+        if completed_cnt == total_cnt and total_cnt > 0:
+            lines.append("\n🎉 所有大纲子问题已全部核销完成！核心事实已充分，请立即 note_read 并输出完整报告，严禁继续发散检索。")
+        return "\n".join(lines)
+
+    def update_checklist_item(self, sub_id: int, status: str, summary: str = "") -> str:
+        """更新指定子问题的看板状态，并触发 checklist 事件。"""
+        for item in self.checklist:
+            if str(item["id"]) == str(sub_id):
+                item["status"] = status
+                if summary:
+                    item["summary"] = summary
+                completed = sum(1 for it in self.checklist if it["status"] == "completed")
+                self._emit_sub("checklist", items=[dict(it) for it in self.checklist],
+                               completed=completed, total=len(self.checklist))
+                return f"看板更新成功：子问题 {sub_id} 状态已更新为 {status}" + (f"（结论: {summary}）" if summary else "")
+        return f"未找到编号为 {sub_id} 的子问题，当前可用子问题编号：{[it['id'] for it in self.checklist]}"
+
+    def sync_checklist_from_note(self, note_content: str):
+        """启发式同步：若笔记中提及某子问题且该项尚未完成，自动标记为已完成。"""
+        if not self.checklist or not note_content:
+            return
+        import re
+        for item in self.checklist:
+            if item["status"] == "completed":
+                continue
+            sub_id = str(item["id"])
+            patterns = [
+                rf"【子问题\s*{sub_id}】",
+                rf"子问题\s*{sub_id}[：:]",
+                rf"子问题\s*{sub_id}\b",
+                rf"\[子问题\s*{sub_id}\]"
+            ]
+            if any(re.search(pat, note_content) for pat in patterns):
+                clean_lines = [l.strip() for l in note_content.splitlines() if l.strip()]
+                first_line = clean_lines[0] if clean_lines else ""
+                first_line = re.sub(r"^[#\-\*\s【】\[\]子问题0-9：:]+", "", first_line).strip()
+                summary = first_line[:50] or "已记录相关调研笔记"
+                self.update_checklist_item(item["id"], "completed", summary)
+
     def run(self, question: str) -> dict:
         client = make_client()
         self._step_cur, self._sub = 0, 0   # 0 号段 = 启动准备（记忆/护栏/MCP）
 
-        # 记忆注入
+        # 记忆注入（相关性门禁召回，通用偏好必留，无关领域偏好排除，杜绝记忆带偏）
         memory = MemoryStore(ROOT / "notes" / "memory.json")
-        prefs_text = memory.format_for_prompt()
-        self._emit_sub("memory_inject", count=len(memory.data.get("facts", [])),
+        prefs_text = memory.format_for_prompt(question=question)
+        mem_stats = memory.get_stats_for_prompt(question=question)
+        self._emit_sub("memory_inject",
+                       count=mem_stats["injected"],
+                       total=mem_stats["total"],
+                       filtered=mem_stats["filtered"],
                        text=prefs_text)
 
         system_prompt = (
@@ -185,21 +313,29 @@ class ResearchAgent:
             "并在报告末尾用'## 参考'小节逐条列出 [n] 完整链接——"
             "严禁只写域名文字代替编号引用；\n"
             "4. send_report 是危险操作，仅当用户明确要求发送时才使用；\n"
-            "5. 收尾标准（硬性）：对照【用户问题】，逐项检查核心要点是否都已有带来源的答案"
-            "（以笔记为准）。全部满足，或剩余缺口属于'多轮检索后仍无法获取'的，"
-            "立即停止调用工具并输出报告——不要为了完备而过度调研，"
-            "也不要在证据不足时凭记忆作答；\n"
+            "5. 充分度收敛门禁（硬性）：深度研究不等于无休止穷举！对照【用户问题】，"
+            "只要核心主干要点（产品定位、核心工作流/链路、交互入口、权限与安全边界）"
+            "已有事实和来源支撑（以笔记为准），即判定为信息充分！"
+            "严禁继续发散检索无关的边缘配置、分值折算、详细价目表等次要细节。"
+            "一旦主干充分，立即调用 note_read 并输出报告，坚决杜绝为了'追求极致完备'而原地漫游；\n"
             "6. 数字纪律（硬性）：所有数字（价格/限额/日期/规格）必须逐字来自工具返回的原文；"
-            "证据中没有的数字一律标注'未验证'，严禁凭记忆、推算或换算补全。\n"
+            "证据中没有的数字一律标注'未验证'，严禁凭记忆、推算或换算补全；\n"
+            "7. 摘要优先原则（Snippet-First）：搜索结果返回的 snippet 经常已包含确切日期、版本号、产品定义或核心结论。"
+            "若搜索摘要已能证实某事实，可直接调用 note_write 沉淀并带上对应 url 引用，无需盲目打开每一个网页；仅当摘要缺少关键细节时才调用 fetch_url；\n"
+            "8. 信源分歧处理（交叉验证）：当不同信源（如官方文档 vs 第三方自媒体/社区讨论）的数据或结论相冲突时，"
+            "优先采信一手官方发布；若关键分歧无法简单消除，必须在报告中明确指出'存在信源分歧'，"
+            "分别列出各自信源论据及引用链接编号，严禁擅自猜测抹平或平均化折中。\n"
             + (prefs_text + "\n" if prefs_text else "")
         )
 
-        # 工具装配
+        # 工具与缓存装配（使用局部字典与独立会话缓存，杜绝全局竞态与重复探索）
         tools_mod.set_notes_file(ROOT / "notes" / "agent_memory" /
                                  f"run_{int(time.time())}.md")
-        tools_mod.REGISTRY.clear()
-        tools_mod.REGISTRY.update(tools_mod.REAL_REGISTRY)
-        tools_mod.REGISTRY["send_report"] = send_report
+        from common.cache import SessionToolCache
+        self.cache = SessionToolCache()
+        self.tools_registry = dict(tools_mod.REAL_REGISTRY)
+        self.tools_registry["send_report"] = send_report
+        self.tools_registry["update_checklist"] = self.update_checklist_item
         all_tools = tools_mod.REAL_TOOLS + SEND_TOOL
 
         self.mcp_clients = []
@@ -220,32 +356,91 @@ class ResearchAgent:
         self._emit_sub("guardrail", max=budget.max,
                        dangerous=list(DANGEROUS_TOOLS))
 
+        t_run = time.time()
+        tool_sequence, errors = [], []
+
+        # 节点：规划（JSON mode 生成研究大纲，计入 Budget 且返回 outline）
+        outline = {}
+        t_plan = time.time()
+        try:
+            plan_msg, plan_usage = call_llm(
+                client,
+                messages=[
+                    {"role": "system",
+                     "content": "你是研究规划师。针对用户问题输出JSON研究大纲，格式："
+                                '{"goal":"一句话目标","sub_questions":[{"id":1,"q":"子问题",'
+                                '"what_to_verify":"要查证什么"}],"constraints":["约束"]}。'
+                                "硬性要求：子问题不超过3个、what_to_verify一句话以内——"
+                                "大纲必须在约10步内可调研完成，贪多会导致任务永远做不完。只规划，不执行。"},
+                    {"role": "user", "content": question},
+                ],
+                response_format={"type": "json_object"},
+            )
+            budget.add(plan_usage)
+            outline = json.loads(plan_msg.content or "{}")
+            self._emit_sub("plan", outline=outline, goal=outline.get("goal", ""),
+                           sub_questions=outline.get("sub_questions", []),
+                           ms=round((time.time() - t_plan) * 1000),
+                           prompt_tokens=plan_usage.prompt_tokens)
+        except Exception as e:
+            errors.append(f"plan: {type(e).__name__}: {str(e)[:150]}")
+            outline = {"goal": question, "sub_questions": [], "constraints": []}
+
+        sub_qs = outline.get("sub_questions", [])
+        self.checklist = [
+            {
+                "id": sq.get("id", i + 1),
+                "q": sq.get("q", ""),
+                "what_to_verify": sq.get("what_to_verify", ""),
+                "status": "pending",
+                "summary": ""
+            }
+            for i, sq in enumerate(sub_qs)
+        ]
+
+        if outline and outline.get("sub_questions"):
+            outline_text = json.dumps(outline, ensure_ascii=False)
+            system_prompt += f"\n\n【研究大纲】\n{outline_text}\n请对照大纲中的子问题与查证要点逐步执行调研。"
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": question},
         ]
         stopped_reason = "model_done"
-        t_run = time.time()
-        tool_sequence, errors = [], []
         evidence = []   # 检索/抓取的原始结果（供评测 judge 核对有据性）
         budget_warned = False
         fail_streak, breaker_trips = 0, 0   # 失败熔断器：连败N次强制改道
         step = 0
         final = ""
 
+
         for step in range(1, config.MAX_LOOP_STEPS + 1):
             self._step_cur, self._sub = step, 0   # 每步重置子序号
-            # ★ 进度状态条：让模型感知步数与预算水位（此前这两个维度它完全感知不到，
-            #   导致前期漫无节制、后期被死线突然叫停）。每轮注入一行，成本可忽略。
+            # ★ 进度状态条与动态看板：让模型感知步数与预算水位，并动态感知大纲核销进度
+            all_completed = (
+                len(self.checklist) > 0 and
+                all(it.get("status") == "completed" for it in self.checklist)
+            )
             if budget.max is not None:
                 status = (f"[系统进度] 第 {step}/{config.MAX_LOOP_STEPS} 步 · "
                           f"token 已用 {budget.used}/{budget.max}")
-                if budget.near_limit(0.8):
-                    status += " · 预算偏紧：请收敛调研范围，优先补关键缺口"
+                if all_completed:
+                    status += " · 🎉 [全量核销] 所有大纲子问题已全部核销完成！核心事实已充分，请立即 note_read 并输出报告，严禁继续发散检索！"
+                elif budget.near_limit(0.8):
+                    status += " · ⚠️ 预算偏紧：请收敛调研范围，优先补关键缺口并准备结题"
+                elif step >= 4 or (budget.used >= 0.5 * budget.max):
+                    status += " · [进展自检] 若核心主干事实已充分，请立即收尾出报告，避免发散到非核心细节"
             else:
                 status = f"[系统进度] 第 {step}/{config.MAX_LOOP_STEPS} 步 · 预算不限"
-            self._emit_sub("progress", text=status)
-            messages.append({"role": "user", "content": status})
+                if all_completed:
+                    status += " · 🎉 [全量核销] 所有大纲子问题已全部核销完成！核心事实已充分，请立即 note_read 并输出报告，严禁继续发散检索！"
+                elif step >= 4:
+                    status += " · [进展自检] 若核心主干事实已充分，请立即收尾出报告，避免发散到非核心细节"
+
+            cl_text = self.format_checklist_for_prompt()
+            full_status = status + (f"\n\n{cl_text}" if cl_text else "")
+            self._emit_sub("progress", text=status, checklist=cl_text)
+            messages.append({"role": "user", "content": full_status})
             # 中止检查（用户点了⏹）：注入一次收尾指令
             if self.stop_check() and not self._wrap_injected:
                 self._wrap_injected = True
@@ -297,23 +492,30 @@ class ResearchAgent:
                                            "reasoning": reasoning}})
 
             if not msg.tool_calls:
-                final = msg.content or ""
-                break
+                candidate = msg.content or ""
+                if not _is_invalid_report(candidate):
+                    final = _clean_report(candidate)
+                    break
+                # 若无 tool_calls 且正文被判定为无效标签，不跳出，继续向下走收尾/报错
 
             # ★ 硬收尾：预算到 95% 或耗尽时"拔掉工具箱"——
             #   最后一次调用不带 tools 参数，模型物理上无法再点菜，
-            #   只能输出结题报告（软提醒"请求它收尾"实测会被无视，硬拔才有效）
+            #   由代码主动从磁盘提取调研笔记全文嵌入 Prompt，杜绝模型输出裸 DSML
             if budget.exhausted or budget.near_limit(0.95):
                 _trim_unanswered_tool_calls(messages)   # ⚠P40：先恢复协议合法
                 if config.DEBUG_DUMP:
                     _dump_structure(messages, rec_hint="hard_stop")
-                messages.append({"role": "user", "content": FORCED_FINAL_MSG})
+                forced_msg = _build_forced_final_msg()
+                messages.append({"role": "user", "content": forced_msg})
                 self.emit("budget", used=budget.used, max=budget.max,
                           note="预算达硬线，移除工具强制结题")
+                t_fin = time.time()  # ★ 修复：提前记录 t_fin，避免 except 分支报 NameError
                 try:
                     fmsg, fusage = call_llm(client, messages)  # ★ 无 tools：不可能再点菜
                     budget.add(fusage)
-                    final = fmsg.content or final
+                    candidate = fmsg.content or ""
+                    if not _is_invalid_report(candidate):
+                        final = _clean_report(candidate)
                 except Exception as e:
                     errors.append(f"budget_hard_stop: {type(e).__name__}: {str(e)[:150]}")
                     self.emit("forced_final", ms=round((time.time() - t_fin) * 1000),
@@ -321,15 +523,19 @@ class ResearchAgent:
                 stopped_reason = "budget_hard_stop"
                 break
 
+
             if usage.prompt_tokens > config.MAX_CONTEXT_TOKENS:
                 before = len(json.dumps(messages, ensure_ascii=False, default=str))
                 messages, summary, cstats = compact_messages(client, messages)
+                if cstats and cstats.get("usage"):
+                    budget.add(cstats["usage"])
                 after = len(json.dumps(messages, ensure_ascii=False, default=str))
                 self._emit_sub("compact", before=before, after=after, stats=cstats,
                                summary=summary)
 
+
             backfill_items = []   # 本轮实际追加的 tool 消息（供回填颗粒详单）
-            for tc in msg.tool_calls:
+            for tc in (msg.tool_calls or []):
                 tool_sequence.append(tc.function.name)
                 args = json.loads(tc.function.arguments)
 
@@ -358,7 +564,14 @@ class ResearchAgent:
                                   if c.owns(tc.function.name)), None)
                     result = (owner.call_tool(tc.function.name, args)
                               if owner else
-                              tools_mod.dispatch(tc.function.name, args))
+                              tools_mod.dispatch(tc.function.name, args,
+                                                 registry=self.tools_registry,
+                                                 cache=self.cache,
+                                                 step=step,
+                                                 extract_client=client,
+                                                 goal=question,
+                                                 on_extract_usage=budget.add))
+
                 except Exception as e:
                     result = f"工具执行异常({type(e).__name__})：{e}"
                     errors.append(f"{tc.function.name}: {e}")
@@ -368,12 +581,27 @@ class ResearchAgent:
                     errors.append(f"{tc.function.name} 连续失败(第{fail_streak}次)")
                 else:
                     fail_streak = 0
+                if tc.function.name == "note_write":
+                    self.sync_checklist_from_note(args.get("content", ""))
                 if tc.function.name in ("web_search", "fetch_url", "fetch_js"):
                     evidence.append(str(result)[:1000])
+
+                cache_hit = bool(getattr(self.cache, "last_hit", False))
+                cache_type = getattr(self.cache, "last_hit_type", None)
+                extracted = bool(getattr(self.cache, "last_extracted", False))
+                extract_ratio = getattr(self.cache, "last_extract_ratio", 0)
+                before_chars = getattr(self.cache, "last_raw_chars", 0)
+                after_chars = getattr(self.cache, "last_extracted_chars", 0)
+                auto_fallback = bool(getattr(self.cache, "last_auto_fallback", False))
+
                 self._emit_sub("tool_result", name=tc.function.name,
                                result=str(result)[:200],
                                full_result=str(result),   # 完整输出，不二次截断
-                               args=args, tool_ms=tool_ms)
+                               args=args, tool_ms=tool_ms,
+                               cache_hit=cache_hit, cache_type=cache_type,
+                               extracted=extracted, extract_ratio=extract_ratio,
+                               before_chars=before_chars, after_chars=after_chars,
+                               auto_fallback=auto_fallback)
                 appended = {"role": "tool", "tool_call_id": tc.id,
                             "content": result}
                 messages.append(appended)
@@ -396,7 +624,8 @@ class ResearchAgent:
             #   摘除未应答点菜（协议合法）→ 带笔记输出《阶段性结题报告》
             stopped_reason = "max_steps"
             _trim_unanswered_tool_calls(messages)   # ⚠P40：末尾未应答点菜作废
-            messages.append({"role": "user", "content": FORCED_FINAL_MSG})
+            forced_msg = _build_forced_final_msg()
+            messages.append({"role": "user", "content": forced_msg})
             self.emit("budget", used=budget.used,
                       max=(budget.max if budget.max is not None else 0),
                       note="步数耗尽：强制无工具结题")
@@ -404,9 +633,11 @@ class ResearchAgent:
             try:
                 fmsg, fusage = call_llm(client, messages)   # 无 tools：不可能再点菜
                 budget.add(fusage)
-                final = fmsg.content or final
+                candidate = fmsg.content or ""
+                if not _is_invalid_report(candidate):
+                    final = _clean_report(candidate)
                 self.emit("forced_final", ms=round((time.time() - t_fin) * 1000),
-                          output=(fmsg.content or "")[:400])
+                          output=(final or "")[:400])
             except Exception as e:
                 errors.append(f"max_steps_forced: {type(e).__name__}: {str(e)[:150]}")
 
@@ -414,26 +645,33 @@ class ResearchAgent:
         if stopped_reason in ("budget_hard_stop", "budget_exhausted", "max_steps",
                               "user_stop", "error") and not final:
             _trim_unanswered_tool_calls(messages)   # ⚠P40：先恢复协议合法
-            messages.append({"role": "user", "content": FORCED_FINAL_MSG})
+            forced_msg = _build_forced_final_msg()
+            messages.append({"role": "user", "content": forced_msg})
             t_fin = time.time()
             try:
                 fmsg, fusage = call_llm(client, messages)  # 不带 tools，杜绝再点菜
                 budget.add(fusage)
-                final = fmsg.content or final
+                candidate = fmsg.content or ""
+                if not _is_invalid_report(candidate):
+                    final = _clean_report(candidate)
                 self.emit("forced_final", ms=round((time.time() - t_fin) * 1000),
-                          output=(fmsg.content or "")[:400],
-                          input_note=FORCED_FINAL_MSG)
+                          output=(final or "")[:400],
+                          input_note="系统强制结题")
             except Exception as e:
                 errors.append(f"forced_final: {e}")
-            # 最后兜底：结题调用失败时，把笔记原文作为报告输出（信息不能跟着丢）
-            if not final:
-                notes_p = tools_mod._current_notes_file()
-                if notes_p and Path(notes_p).exists():
-                    notes_text = Path(notes_p).read_text(encoding="utf-8")
-                    if notes_text.strip():
-                        final = ("【预算耗尽，自动结题】以下为调研笔记原文"
-                                 "（未经整理，数据可信但格式粗糙）：\n\n" + notes_text[:4000])
-                final = final or "（预算耗尽且结题失败，未获取到有效结论）"
+
+        # 最后兜底：结题调用失败或输出被判定为无效标签时，把笔记原文作为报告输出（信息不能跟着丢）
+        if not final or _is_invalid_report(final):
+            notes_p = tools_mod._current_notes_file()
+            if notes_p and Path(notes_p).exists():
+                notes_text = Path(notes_p).read_text(encoding="utf-8")
+                if notes_text.strip():
+                    final = ("【自动结题报告（基于调研笔记）】以下为调研笔记原文"
+                             "（已自动提取核心数据）：\n\n" + notes_text.strip()[:6000])
+            final = final or "（预算耗尽且结题失败，未获取到有效结论）"
+        else:
+            final = _clean_report(final)
+
 
         # 会话结束：记忆提取 + 运行日志
         transcript = "\n".join(
@@ -460,7 +698,10 @@ class ResearchAgent:
 
         return {"answer": final, "stop_reason": stopped_reason,
                 "steps": step, "tokens": budget.used, "errors": errors,
-                "evidence": evidence, "run_id": rec["run_id"]}
+                "evidence": evidence, "run_id": rec["run_id"],
+                "outline": outline,
+                "saved_calls": getattr(self.cache, "total_saved_calls", 0)}
+
 
     def _setup_mcp(self, spec: dict):
         # 共享单例：同 server 全项目只连一次（修复每次运行 spawn 新进程的泄漏）

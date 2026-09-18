@@ -28,8 +28,10 @@ WORKER_SYSTEM = (
     "1. 用 web_search/fetch_url 查证，禁止编造；\n"
     "2. 关键发现随手 note_write（要点+数据+来源域名）；\n"
     "3. 收工前最后一个动作必须是 note_read；\n"
-    "4. 最终输出=调研结论（不是报告）：≤300字要点式，每条带来源域名，"
-    "没查到的项如实标注'未查到'。"
+    "4. 充分度门禁（硬性）：只要核心要点已有据可查，立即 note_read 并输出浓缩结论，不要无休止漫游其他细节；\n"
+    "5. 摘要优先原则：若搜索摘要已能清晰证实要点，直接记录并保留来源链接，不必非要打开长网页；\n"
+    "6. 信源分歧处理：遇官方与第三方说法不一致时，以官方一手文档为准；分歧严重时并列注明两方结论；\n"
+    "7. 最终输出=调研结论（不是报告）：≤300字要点式，每条带来源域名与完整URL，没查到的项如实标注'未查到'。"
 )
 
 
@@ -43,11 +45,12 @@ def run_sub_agent(client, brief: dict, worker_id: str, max_steps: int = 10,
     t0 = time.time()
     if stagger:
         time.sleep(stagger)
-    # 线程安全的独立笔记文件（每个 worker 一份，互不干扰）
+    # 线程安全的独立笔记文件、工具注册表与会话缓存（每个 worker 一份，互不干扰）
     tools_mod.set_notes_file(ROOT / "notes" / "agent_memory" /
                              f"w{worker_id}_{int(t0)}.md")
-    tools_mod.REGISTRY.clear()
-    tools_mod.REGISTRY.update(tools_mod.REAL_REGISTRY)
+    worker_registry = dict(tools_mod.REAL_REGISTRY)
+    from common.cache import SessionToolCache
+    worker_cache = SessionToolCache()
 
     messages = [
         {"role": "system",
@@ -75,12 +78,25 @@ def run_sub_agent(client, brief: dict, worker_id: str, max_steps: int = 10,
             break
 
         if usage.prompt_tokens > config.MAX_CONTEXT_TOKENS:
-            messages, _, _ = compact_messages(client, messages)
+            messages, _, cstats = compact_messages(client, messages)
+            if cstats and cstats.get("usage"):
+                tokens += cstats["usage"].total_tokens
+
+        def _on_extract_usage(u):
+            nonlocal tokens
+            tokens += u.total_tokens
 
         for tc in msg.tool_calls:
             args = json.loads(tc.function.arguments)
-            result = tools_mod.dispatch(tc.function.name, args)
+            result = tools_mod.dispatch(tc.function.name, args,
+                                        registry=worker_registry,
+                                        cache=worker_cache,
+                                        step=step,
+                                        extract_client=client,
+                                        goal=brief["task"],
+                                        on_extract_usage=_on_extract_usage)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
     else:
         findings = f"（worker{worker_id} 步数耗尽，未完成）"
 

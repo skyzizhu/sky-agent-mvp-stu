@@ -143,7 +143,13 @@
 
     <div class="panel" style="margin-top:14px">
       <h2>执行流（实时）</h2>
+      <div class="placeholder" id="timeline_placeholder" style="display:none"></div>
       <div id="timeline"><div class="placeholder">等待运行…</div></div>
+      <div id="replay_banner" class="replaybar" style="display:none; margin-top:10px; padding:8px 12px;
+           background:#eef4ff; border:1px solid #c7d7f5; border-radius:8px; font-size:12.5px; color:#274a8f;">
+        <b>▶ 回放模式</b> · 正在查看历史运行的完整事件流（只读，不影响后台）。
+        <button class="rbtn" style="margin-left:10px" onclick="location.href=location.pathname">⟳ 回到最新运行</button>
+      </div>
       <div class="approval" id="approval" style="display:none">
         <div class="ev approval">
           <b>⚠️ 需要人工确认</b> —— <span id="approval_text"></span>
@@ -298,8 +304,15 @@ function renderEvent(ev, live){
         `<b>其他边界</b>：步数上限 20 步 · 上下文超限自动摘要压缩 · 死线注入于倒数第 2 步`); break;
     case 'mcp':
       addSub(sub, `🔌 ${esc(ev.msg)}`); break;
+    case 'plan': {
+      const subQs = (ev.sub_questions || []).map(sq => `<li><b>[${esc(sq.id || '')}] ${esc(sq.q || '')}</b><br><span style="color:#666">查证要点：${esc(sq.what_to_verify || '')}</span></li>`).join('');
+      addSub(sub, `📋 规划大纲 · <b>${esc(ev.goal || '目标')}</b>` + (ev.ms ? ` (${ev.ms}ms)` : ''),
+        subQs ? `<ul style="margin:4px 0 8px 18px;padding:0;">${subQs}</ul><pre>${esc(JSON.stringify(ev.outline, null, 2))}</pre>` : `<pre>${esc(JSON.stringify(ev.outline, null, 2))}</pre>`);
+      break;
+    }
 
     case 'step': {
+
       ensureGroup(ev.step, `第 ${ev.step} 步`);
       const d = ev.detail || {};
       const td = d.token_detail || {};
@@ -326,6 +339,18 @@ function renderEvent(ev, live){
       addSub(sub, `⚠️ ${esc(ev.note)}`); break;
     case 'progress':
       addSub(sub, `📊 ${esc(ev.text)}`); break;
+    case 'checklist': {
+      const items = (ev.items || []).map(it => {
+        const icon = it.status === 'completed' ? '✅' : (it.status === 'in_progress' ? '⏳' : '⚪');
+        const stStyle = it.status === 'completed' ? 'color:#137333;font-weight:600' : (it.status === 'in_progress' ? 'color:#b06000;font-weight:600' : 'color:#555');
+        return `<li style="margin-bottom:4px;">${icon} <span style="${stStyle}">[子问题${esc(it.id)}] ${esc(it.q)}</span>` +
+               (it.summary ? `<div style="font-size:11px;color:#137333;margin-top:2px;padding-left:22px;">↳ 结论: ${esc(it.summary)}</div>` : '') +
+               `</li>`;
+      }).join('');
+      addSub(sub, `📌 <b>动态待办看板更新</b>（${ev.completed}/${ev.total} 已核销）`,
+        `<ul style="margin:4px 0 6px 4px;padding:0;line-height:1.6;list-style:none;">${items}</ul>`);
+      break;
+    }
     case 'budget':
       addSub(sub, `⚠️ ${esc(ev.note || '预算接近上限，注入收尾指令')}（${ev.used}/${ev.max}）`); break;
     case 'breaker':
@@ -348,8 +373,17 @@ function renderEvent(ev, live){
     }
 
     case 'tool_result':
+      const cacheBadge = ev.cache_hit
+        ? ` <span class="tt" style="background:#e6f4ea;color:#137333;font-weight:600">⚡ 命中缓存/免请求</span>`
+        : '';
+      const extractBadge = ev.extracted
+        ? ` <span class="tt" style="background:#e8f0fe;color:#1a73e8;font-weight:600">📄 萃取提纯（${ev.before_chars}字→${ev.after_chars}字 · 压减${ev.extract_ratio}%）</span>`
+        : '';
+      const fallbackBadge = ev.auto_fallback
+        ? ` <span class="tt" style="background:#f3e8fd;color:#7627bb;font-weight:600">🌐 自动降级JS渲染</span>`
+        : '';
       addSub(sub,
-        `🔧 ${ev.name} → ${String(ev.result).slice(0,110)}` + msBadge(ev.tool_ms),
+        `🔧 ${ev.name}${cacheBadge}${extractBadge}${fallbackBadge} → ${String(ev.result).slice(0,110)}` + msBadge(ev.tool_ms),
         `<b>输入参数</b>：<pre>${esc(JSON.stringify(ev.args, null, 1))}</pre>` +
         `<b>完整输出（前4000字符）</b>：<pre>${esc(ev.full_result || ev.result)}</pre>`);
       break;
@@ -416,8 +450,10 @@ function renderEvent(ev, live){
         `🏁 研究完成（${ev.steps} 步 · ${ev.used.toLocaleString()} tok · ${ev.stop_reason}` +
         `${ev.total_ms!=null ? ' · 总耗时 '+(ev.total_ms/1000).toFixed(1)+'s' : ''}）`);
       if (ev.answer) {
-        lastReportMd = ev.answer;   // 保存 Markdown 原文（下载/复制用）
-        const safe = esc(ev.answer);
+        // 清洗 DSML / tool 调用残留标签（历史运行回放与极端边界防御）
+        const cleanAnswer = ev.answer.replace(/<[^>\n]*｜｜[^>\n]*>/g, '').replace(/<[/]?(?:tool_call|invoke)[^>\n]*>/g, '').trim();
+        lastReportMd = cleanAnswer || ev.answer;   // 保存 Markdown 原文（下载/复制用）
+        const safe = esc(lastReportMd);
         if (typeof marked !== 'undefined') {
           $('report').innerHTML = marked.parse(safe);
           $('report').querySelectorAll('a').forEach(a => a.target = '_blank');
@@ -516,10 +552,19 @@ async function loadRun(id){
   if (es) es.close();
   liveMode = false;
   runId = id;
-  $('start').disabled = false; $('stopbtn').disabled = true;
   resetTimeline();
   const r = await fetch(`/api/runs/${id}/events`);
   const d = await r.json();
+  // RunLog 元信息（问题/停止原因/tokens）
+  const meta = d.meta || {};
+  const qText = (meta.question || '').slice(0, 40) || '（未知）';
+  // 标记回放模式横幅
+  $('replay_banner').innerHTML =
+    `<b>▶ 回放模式</b> · 运行 <code>${id}</code>` +
+    ` · 停止原因: <b>${meta.stop_reason || '未知'}</b> · 总 token: ${meta.tokens ?? '?'}` +
+    ` <span style="color:var(--dim)">（只读，不影响后台）</span>` +
+    ` <button class="rbtn" onclick="location.href=location.pathname" style="margin-left:10px">⟳ 回到最新运行</button>`;
+  $('replay_banner').style.display = '';
   if (!d.events.length) {
     addStandalone('', '该运行没有详细事件记录（早于事件存档功能上线）。');
   } else {

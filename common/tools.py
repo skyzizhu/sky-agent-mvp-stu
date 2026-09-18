@@ -78,7 +78,7 @@ REAL_TOOLS = [
             "name": "web_search",
             "description": "搜索互联网，返回前几条结果的标题、链接和摘要。"
                            "用于查找事实、新闻、产品信息等。"
-                           "如果摘要已足够回答问题，不必再打开链接。",
+                           "【摘要优先原则】：如果搜索摘要已足够证实事实、数字或定义，应直接 note_write 记录并保留对应 url 引用，无需盲目打开每一个链接；仅当摘要缺少关键细节时才调用 fetch_url。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -92,8 +92,8 @@ REAL_TOOLS = [
         "type": "function",
         "function": {
             "name": "fetch_url",
-            "description": "打开一个网页并提取正文文字。仅当搜索摘要不够、"
-                           "需要网页里的细节时才使用；不要重复打开同一个链接。",
+            "description": "打开一个网页并提取正文文字。系统内置 SPA 前端动态渲染探测与自动降级无头浏览器能力。"
+                           "仅当搜索摘要不够、需要网页深层细节时才使用；不要重复打开同一个链接；若某域名多次抓取失败，建议基于摘要回答或更换其他来源。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -176,23 +176,66 @@ def web_search(query: str) -> str:
     return dump
 
 
+SPA_KEYWORDS = (
+    "enable javascript", "需要启用 javascript", "请开启 javascript",
+    "正在加载", "loading...", "javascript is required", "请开启 js",
+    "redirecting...", "页面加载中"
+)
+
+
+def _is_spa_or_empty(text: str) -> bool:
+    if not text:
+        return True
+    t = text.strip().lower()
+    if len(t) < 150:
+        return True
+    if any(k in t for k in SPA_KEYWORDS) and len(t) < 400:
+        return True
+    return False
+
+
 def fetch_url(url: str) -> str:
     if not url.startswith(("http://", "https://")):
         return "错误：url 必须以 http:// 或 https:// 开头。请从搜索结果的 url 字段复制完整链接。"
+    
+    httpx_err = None
+    text = ""
     try:
         import httpx, trafilatura
-        resp = httpx.get(url, timeout=15, follow_redirects=True,
-                         headers={"User-Agent": "Mozilla/5.0 (research-agent-tutorial)"})
+        resp = httpx.get(
+            url, timeout=15, follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        )
         resp.raise_for_status()
+        text = trafilatura.extract(resp.text) or ""
     except Exception as e:
-        return f"错误：网页打开失败({e})。请换一条搜索结果里的其他链接，或仅凭摘要回答。"
-    text = trafilatura.extract(resp.text) or ""
-    if not text:
-        return "错误：该网页没有可提取的正文(可能是纯视频/需要登录)。请换其他链接。"
-    text = smart_truncate(text, config.MAX_TOOL_RESULT_CHARS)   # 头尾保留：页脚定价不再被切
-    return json.dumps({"url": url, "content": text,
-                       "note": f"正文头尾保留截断至{len(text)}字符，中间缺失如需请告知"},
-                      ensure_ascii=False)
+        httpx_err = e
+
+    # 1. 静态抓取成功且正文充分，直接返回
+    if not httpx_err and not _is_spa_or_empty(text):
+        text = smart_truncate(text, config.MAX_TOOL_RESULT_CHARS)   # 头尾保留：页脚定价不再被切
+        return json.dumps({"url": url, "content": text,
+                           "note": f"正文头尾保留截断至{len(text)}字符，中间缺失如需请告知"},
+                          ensure_ascii=False)
+
+    # 2. 静态抓取为空/短小(<150字)/SPA骨架屏或网络受阻时，尝试自动降级调用无头浏览器 JS 渲染
+    try:
+        js_res = fetch_js(url, wait_ms=3000)
+        if isinstance(js_res, str) and not js_res.startswith("错误："):
+            js_data = json.loads(js_res)
+            if js_data.get("content") and len(js_data["content"].strip()) >= 100:
+                js_data["auto_fallback"] = True
+                js_data["note"] = f"静态抓取无有效正文/SPA骨架屏，已自动降级为无头浏览器JS渲染获取({len(js_data['content'])}字)"
+                return json.dumps(js_data, ensure_ascii=False)
+    except Exception:
+        pass
+
+    # 3. 两种方式均未提取到有效正文，返回结构化错误与引导建议
+    reason = f"({httpx_err})" if httpx_err else "(静态提取与JS渲染均无有效正文/可能是纯视频/需登录/强反爬验证)"
+    return (
+        f"错误：网页抓取失败{reason}。建议不要继续抓取该链接，"
+        f"优先依据搜索结果里的摘要(snippet)回答，或更换其他搜索结果链接。"
+    )
 
 
 def fetch_js(url: str, wait_ms: int = 4000) -> str:
@@ -339,12 +382,135 @@ FETCH_JS_TOOL = [{
 }]
 # 注意：FETCH_JS_TOOL 是列表，必须用 extend（append 会嵌套成 tools[2]=[...] → API 400）
 REAL_TOOLS.extend(FETCH_JS_TOOL)
-
 REAL_TOOLS.extend(NOTE_TOOLS)
 
 
-def dispatch(name: str, args: dict) -> str:
-    fn = REGISTRY.get(name)
+def update_checklist(sub_id: int, status: str, summary: str = "") -> str:
+    """更新大纲子问题查证进度（默认回执，运行时由 agent_core 的看板状态机接管）。"""
+    return f"子问题 {sub_id} 状态已更新为 {status}" + (f"（结论：{summary}）" if summary else "")
+
+
+CHECKLIST_TOOL = [{
+    "type": "function",
+    "function": {
+        "name": "update_checklist",
+        "description": "更新研究大纲子问题的查证进度看板。每当查证完一个子问题并记下笔记后调用，"
+                       "将对应子问题状态改为 completed 并填写简要结论。"
+                       "所有子问题 completed 后，请立即 note_read 结题出报告。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sub_id": {"type": "integer", "description": "要更新的子问题编号（如 1, 2, 3）"},
+                "status": {"type": "string", "enum": ["in_progress", "completed"],
+                           "description": "子问题状态：in_progress(正在查证) 或 completed(已查证完备)"},
+                "summary": {"type": "string",
+                            "description": "核心事实结论（不超过50字，status为completed时必填）"},
+            },
+            "required": ["sub_id", "status"],
+        },
+    },
+}]
+
+REAL_TOOLS.extend(CHECKLIST_TOOL)
+REAL_REGISTRY.update({"update_checklist": update_checklist})
+
+# 预先将 REAL_REGISTRY 合并进 REGISTRY，确保未显式传 registry 的调用方也能找到完整工具
+REGISTRY.update(REAL_REGISTRY)
+
+
+def _append_advisory(result: str, advisory: str | None) -> str:
+    if not advisory:
+        return result
+    try:
+        data = json.loads(result)
+        if isinstance(data, dict):
+            data["advisory"] = advisory.strip()
+            if "note" in data:
+                data["note"] = f"{data['note']} | {advisory.strip()}"
+            else:
+                data["note"] = advisory.strip()
+            return json.dumps(data, ensure_ascii=False)
+    except Exception:
+        pass
+    return result + advisory
+
+
+def dispatch(name: str, args: dict, registry: dict | None = None,
+             cache=None, step: int = 0,
+             extract_client=None, goal: str = "",
+             on_extract_usage=None) -> str:
+    reg = registry if registry is not None else REGISTRY
+    fn = reg.get(name)
     if fn is None:
-        return f"错误：工具 {name} 不存在。可用工具：{list(REGISTRY)}"
-    return fn(**args)
+        return f"错误：工具 {name} 不存在。可用工具：{list(reg)}"
+
+    # 缓存与去重拦截检查
+    if cache is not None:
+        if name == "web_search":
+            query = args.get("query", "")
+            hit, cached_res, advisory = cache.check_search(query, step=step)
+            if hit:
+                return _append_advisory(cached_res, advisory)
+        elif name in ("fetch_url", "fetch_js"):
+            url = args.get("url", "")
+            hit, cached_res, advisory = cache.check_url(url)
+            if hit:
+                return _append_advisory(cached_res, advisory)
+
+    result = fn(**args)
+
+    # 单页即时萃取（Map 阶段）：长网页在喂入上下文前由轻量 LLM 提纯核心事实与数据
+    if (name in ("fetch_url", "fetch_js")
+            and extract_client is not None
+            and isinstance(result, str)
+            and not result.startswith("错误")):
+        try:
+            from common.context import extract_page_facts, PAGE_EXTRACT_THRESHOLD
+            data = None
+            try:
+                data = json.loads(result)
+            except Exception:
+                pass
+
+            if isinstance(data, dict) and "content" in data:
+                raw_text = data["content"]
+                if len(raw_text) > PAGE_EXTRACT_THRESHOLD:
+                    extracted, usage = extract_page_facts(extract_client, raw_text, goal=goal)
+                    if usage and on_extract_usage:
+                        on_extract_usage(usage)
+                    if extracted and len(extracted) < len(raw_text):
+                        ratio = round((1 - len(extracted) / len(raw_text)) * 100)
+                        data["content"] = extracted
+                        data["note"] = (f"已通过单页Map即时萃取提纯（原长 {len(raw_text)} 字 → "
+                                        f"精炼至 {len(extracted)} 字，压缩比 {ratio}%）")
+                        result = json.dumps(data, ensure_ascii=False)
+                        if cache is not None:
+                            cache.last_extracted = True
+                            cache.last_raw_chars = len(raw_text)
+                            cache.last_extracted_chars = len(extracted)
+                            cache.last_extract_ratio = ratio
+        except Exception:
+            pass  # 萃取异常时不阻断，降级保留原长文
+
+    # 状态收集：是否触发了无缝自动降级 JS 渲染
+    if cache is not None and isinstance(result, str):
+        if '"auto_fallback": true' in result or '"auto_fallback": True' in result:
+            cache.last_auto_fallback = True
+
+    # 域名失败感知：若抓取失败，累计该域名失败次数并附带引导建议
+    if cache is not None and isinstance(result, str) and result.startswith("错误") and name in ("fetch_url", "fetch_js"):
+        url = args.get("url", "")
+        cache.record_domain_failure(url)
+        domain_advisory = cache.check_domain_advisory(url)
+        if domain_advisory:
+            result = result + domain_advisory
+
+    # 成功执行后回填缓存（错误/反爬拦截不缓存，保留重试机会）
+    if cache is not None and isinstance(result, str) and not result.startswith("错误"):
+        if name == "web_search":
+            cache.set_search(args.get("query", ""), result, step=step)
+        elif name in ("fetch_url", "fetch_js"):
+            cache.set_url(args.get("url", ""), result)
+
+    return result
+

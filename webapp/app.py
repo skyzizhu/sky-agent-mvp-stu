@@ -160,7 +160,7 @@ def events(run_id: str):
         while True:
             events = agent.events_since(last)
             for e in events:
-                yield f"data: {json.dumps(e, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(e, ensure_ascii=False, default=str)}\n\n"
             last += len(events)
             if agent.finished and agent.event_count() <= last:
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"

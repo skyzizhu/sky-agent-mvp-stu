@@ -724,7 +724,7 @@ class ResearchAgent:
             self.session.save_context(
                 summary=f"已完成 {step} 步研究，提取到 {len(self.session.read_notes())} 字符笔记",
                 key_findings=key_findings[-5:], pending=pending)
-            self.session.add_run(rec["run_id"], question[:80])
+            self.session.add_run(self.run_id or rec["run_id"], question[:80])
 
         rec = log_run(run_id=self.run_id, impl=self.impl,
                       question=question[:80], steps=step,

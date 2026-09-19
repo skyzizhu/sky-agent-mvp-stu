@@ -139,7 +139,7 @@ def start_research(body: ResearchIn):
     session.add_run(run_id, body.question[:80])
     agent = ResearchAgentWeb(run_id, impl="webapp",
                              use_mcp=os.getenv("MCP_FS") == "1",
-                             budget_max=budget_max, run_id=run_id,
+                             budget_max=budget_max,
                              session=session,
                              events_path=EV_DIR / f"events_{run_id}.jsonl")
     t = threading.Thread(target=agent.run, args=(body.question,), daemon=True)

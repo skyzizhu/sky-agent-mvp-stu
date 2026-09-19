@@ -37,11 +37,6 @@ class Session:
         self.meta_path.write_text(json.dumps(self.meta, ensure_ascii=False, indent=2),
                                   encoding="utf-8")
 
-    # ---------- 笔记续跑（第一档） ----------
-    @property
-    def notes_path(self) -> Path:
-        return self.dir / "notes.md"
-
     def read_notes(self) -> str:
         """读取本 session 的全部研究笔记（新 session 返回空串）。"""
         if self.notes_path.exists():

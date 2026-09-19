@@ -179,6 +179,7 @@
       <div class="btnrow">
         <button id="start" onclick="start()">🚀 开始研究 <kbd class="kbd-hint">⌘↵</kbd></button>
         <button id="stopbtn" class="ghost" onclick="stopRun()" disabled>⏹ 中止</button>
+        <button id="newses" class="ghost" onclick="newSession()" disabled style="color:var(--dim)">🆕 新研究</button>
       </div>
       <div class="hint">含"把报告发给某人邮箱"的问题会触发危险操作确认；写类工具同样需要批准。</div>
     </div>
@@ -239,6 +240,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let runId = null, es = null, liveMode = false, doneSeen = false;
+let sessionId = '';   // 当前研究会话 ID（空 = 新会话）
 let curGroup = null, lastApprovalLi = null;
 let TIERS = {quick:10000, standard:30000, deep:100000};
 const esc = t => String(t ?? '').replace(/</g,'&lt;');
@@ -587,6 +589,15 @@ async function copyMd(){
   setTimeout(() => { btn.textContent = '📋 复制 MD'; }, 1500);
 }
 
+// ---------- 会话管理 ----------
+function newSession(){
+  sessionId = '';
+  resetTimeline();
+  $('report_panel').style.display = 'none';
+  lastReportMd = ''; setReportButtons(false);
+  $('question').value = ''; $('question').focus();
+}
+
 // ---------- 实时运行 ----------
 async function start(){
   const q = $('question').value.trim();
@@ -603,9 +614,10 @@ async function start(){
   startRunStatus();
   const r = await fetch('/api/research', {method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({question:q, tier})});
+    body: JSON.stringify({question:q, tier, session_id: sessionId})});
   const d = await r.json();
   runId = d.run_id;
+  if (d.session_id) sessionId = d.session_id;   // 首次运行后记住
   listen();
 }
 

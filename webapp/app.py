@@ -25,6 +25,8 @@ SESSION_DIR = ROOT / "sessions"          # 每次运行的事件存档（可回�
 from common.guardrails import DANGEROUS_TOOLS
 from common.session import SessionStore
 from common.observability import load_runs
+from common import tools as tools_mod
+from services import report_delivery
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -52,6 +54,7 @@ class ResearchAgentWeb(ResearchAgent):
         self._queue = []                      # 事件队列（SSE 消费）
         self._cond = threading.Condition()
         self._approval = None                 # {"event","approved","tool","args"}
+        self._send_decision = None            # 投递服务确认卡 {"event","approved"}
         self._thread = None                   # 由路由在启动线程后回填
 
     # -- emit 注入：推进队列 --
@@ -106,6 +109,22 @@ class ResearchAgentWeb(ResearchAgent):
             return True
         return False
 
+    # -- 投递确认：发送确认卡的决定回填（services/report_delivery 阻塞等待） --
+    def wait_send_decision(self, timeout: float) -> bool:
+        ev = threading.Event()
+        with self._cond:
+            self._send_decision = {"event": ev, "approved": None}
+        ev.wait(timeout)
+        return bool(self._send_decision and self._send_decision.get("approved"))
+
+    def resolve_send(self, approved: bool) -> bool:
+        d = self._send_decision
+        if d and not d["event"].is_set():
+            d["approved"] = approved
+            d["event"].set()
+            return True
+        return False
+
     def stop(self):
         self._stop.set()
 
@@ -148,7 +167,25 @@ def start_research(body: ResearchIn):
     #   实现"一次会话多轮查询"的完整时间线还原
     agent._push("run_meta", run_id=run_id, session_id=session.id,
                 question=body.question)
-    t = threading.Thread(target=agent.run, args=(body.question,), daemon=True)
+    # ★运行线程 = Agent 调研 + 定稿后统一投递（投递在宿主层，不进内核）
+    def _target():
+        try:
+            result = agent.run(body.question)
+            agent.run_result = result
+            notes_text = ""
+            try:
+                notes_p = tools_mod._current_notes_file()   # 线程局部：与本轮一致
+                if notes_p and Path(notes_p).exists():
+                    notes_text = Path(notes_p).read_text(encoding="utf-8")
+            except Exception:
+                pass
+            report_delivery.post_run_delivery(
+                agent.emit, body.question, result.get("answer", ""),
+                notes_text=notes_text, wait_decision=agent.wait_send_decision)
+        except Exception as e:
+            agent.emit("error", message=str(e)[:200])
+
+    t = threading.Thread(target=_target, daemon=True)
     RUNS[run_id] = {"agent": agent, "thread": t, "question": body.question}
     agent._thread = t  # SSE 生成器通过它判断运行是否结束
     t.start()
@@ -205,6 +242,19 @@ def stop(run_id: str):
         return JSONResponse({"error": "run not found"}, status_code=404)
     RUNS[run_id]["agent"].stop()
     return {"ok": True}
+
+
+class SendDecisionIn(BaseModel):
+    approved: bool
+
+
+@app.post("/api/research/{run_id}/send_decision")
+def send_decision(run_id: str, body: SendDecisionIn):
+    """发送确认卡的决定回填：批准 → 投递服务真实发送；取消 → 放弃。"""
+    if run_id not in RUNS:
+        return JSONResponse({"error": "run not found"}, status_code=404)
+    ok = RUNS[run_id]["agent"].resolve_send(body.approved)
+    return {"ok": ok}
 
 
 @app.get("/api/runs/{run_id}/events")

@@ -93,7 +93,9 @@ class ResearchAgentWeb(ResearchAgent):
         receipt = ("用户已批准执行。" if approved else
                    "用户【拒绝】了此操作。请尊重该决定：不要重复尝试同一动作，"
                    "改为直接在回答中输出报告内容，并告知用户可自行转发。")
-        self.emit("approval_result", tool=tool, approved=approved)
+        # ★approval_result 由 agent_core 循环在 approver 返回后统一 emit
+        #   （带 sub + receipt）；这里不再重复发——旧代码多发一条缺 sub 的
+        #   事件，会让前端 addSub(undefined) 抛 TypeError，且结论显示两次
         return approved, receipt
 
     def approve(self, approved: bool) -> bool:
@@ -142,6 +144,10 @@ def start_research(body: ResearchIn):
                              budget_max=budget_max,
                              session=session,
                              events_path=EV_DIR / f"events_{run_id}.jsonl")
+    # ★会话元信息写入事件流头部（队列+存档第一行）：历史回放时据此找到所属会话，
+    #   实现"一次会话多轮查询"的完整时间线还原
+    agent._push("run_meta", run_id=run_id, session_id=session.id,
+                question=body.question)
     t = threading.Thread(target=agent.run, args=(body.question,), daemon=True)
     RUNS[run_id] = {"agent": agent, "thread": t, "question": body.question}
     agent._thread = t  # SSE 生成器通过它判断运行是否结束
@@ -150,25 +156,35 @@ def start_research(body: ResearchIn):
 
 
 @app.get("/api/research/{run_id}/events")
-def events(run_id: str):
+def events(run_id: str, since: int = 0):
     if run_id not in RUNS:
         return JSONResponse({"error": "run not found"}, status_code=404)
 
     def gen():
         agent = RUNS[run_id]["agent"]
-        last = 0
+        last = max(0, since)          # ★断点续传：前端重连时带上已收到的条数，不重放不漏发
+        last_out = time.time()
         while True:
             events = agent.events_since(last)
             for e in events:
                 yield f"data: {json.dumps(e, ensure_ascii=False, default=str)}\n\n"
+                last_out = time.time()
             last += len(events)
             if agent.finished and agent.event_count() <= last:
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 return
+            # ★心跳：工具执行/模型调用期间可能几十秒无事件——
+            #   空闲连接会被 WebView/代理掐掉（实测 fetch_js 渲染时前端断流）。
+            #   SSE 注释帧（冒号开头）浏览器会忽略，但能让连接保持"活跃"。
+            if time.time() - last_out > 15:
+                yield ": ping\n\n"
+                last_out = time.time()
             time.sleep(0.3)
 
     from fastapi.responses import StreamingResponse
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 class ApproveIn(BaseModel):
@@ -216,14 +232,26 @@ def run_events(run_id: str):
             try:
                 rec = json.loads(rl)
                 if rec.get("run_id") == run_id:
+                    extra = rec.get("extra") if isinstance(rec.get("extra"), dict) else {}
                     meta = {"question": rec.get("question",""),
                             "ts": rec.get("ts",""), "impl": rec.get("impl",""),
                             "stop_reason": rec.get("stop_reason",""),
-                            "tokens": rec.get("tokens", 0)}
+                            "tokens": rec.get("tokens", 0),
+                            "session_id": extra.get("session_id", "")}
                     break
             except json.JSONDecodeError:
                 continue
     return {"events": events, "meta": meta}
+
+
+@app.get("/api/sessions/{session_id}")
+def get_session(session_id: str):
+    """会话详情：该会话全部轮次（run_id/问题/时间），供前端还原多轮完整时间线。"""
+    s = SESSION_STORE.get(session_id)
+    if s is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    return {"session_id": s.id, "created": s.meta.get("created", ""),
+            "topic": s.meta.get("topic", ""), "runs": s.meta.get("runs", [])}
 
 
 @app.get("/api/runs")

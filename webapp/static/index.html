@@ -124,6 +124,15 @@
   .pinned-list .p-sum { font-size:11px; color:#137333; margin-left:22px; background:#eaf5ee;
                         padding:2px 7px; border-radius:4px; display:inline-block; margin-top:2px; }
 
+  /* 用户输入卡片（每轮查询的起点，同一会话多轮纵向拼接） */
+  .turn-q { display:flex; align-items:baseline; gap:9px; background:#eef4ff;
+            border:1px solid #c7d7f5; border-radius:10px; padding:9px 14px;
+            margin:14px 0 6px; font-size:13.5px; }
+  .turn-q .turn-badge { background:var(--acc); color:#fff; border-radius:99px;
+            font-size:11px; padding:2px 10px; white-space:nowrap; flex-shrink:0; }
+  .turn-q .q-text { font-weight:600; color:#1c2d4c; word-break:break-word; }
+  .turn-q .q-meta { margin-left:auto; color:var(--dim); font-size:11px; white-space:nowrap; flex-shrink:0; }
+
   /* 全屏阅读模式 (Zen Mode) */
   #report_panel.zen-active { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999;
                              margin:0 !important; border-radius:0; border:none; padding:20px 40px;
@@ -239,13 +248,14 @@
     </div>
   </div>
 </main>
-</main>
 
 <script>
 const $ = id => document.getElementById(id);
 let runId = null, es = null, liveMode = false, doneSeen = false;
 let sessionId = '';   // 当前研究会话 ID（空 = 新会话）
 let curGroup = null, lastApprovalLi = null;
+let lastReportMd = '';   // 当前报告的 Markdown 原文（复制/下载用）
+let turnCount = 0;       // 当前视图中的轮次计数（用户输入卡片编号，同一会话多轮累加）
 let TIERS = {quick:10000, standard:30000, deep:100000};
 const esc = t => String(t ?? '').replace(/</g,'&lt;');
 const msBadge = ms => ms != null ? ` <span class="tt">⏱ ${ms}ms</span>` : '';
@@ -277,23 +287,27 @@ document.querySelectorAll('#tiers .tier').forEach(b => {
 function loadHistory(){
   fetch('/api/runs').then(r=>r.json()).then(d=>{
     if (!d.runs.length) { $('history').innerHTML = '<div class="placeholder">暂无运行</div>'; return; }
-    $('history').innerHTML = d.runs.slice(0,15).map(r=>`
+    $('history').innerHTML = d.runs.slice(0,15).map(r=>{
+      const qSafe = esc((r.question||'').slice(0,26));
+      return `
       <div class="run-item ${r.run_id===runId?'selrun':''}" data-rid="${r.run_id}"
-           onclick="loadRun('${r.run_id}')" title="${(r.question||'').replace(/"/g,'')}">
+           onclick="loadRun('${r.run_id}')" title="${esc((r.question||'').replace(/"/g,''))}">
         <span class="st" style="color:${r.stop_reason==='model_done'?'#188554':'#9a6700'}">
           ${r.stop_reason==='model_done'?'✓':'⏹'}</span>
-        ${(r.question||'').slice(0,26)}…<br>
-        <span style="color:var(--dim)">${r.ts.slice(5,16)} · ${(r.tokens||0).toLocaleString()} tok</span>
-      </div>`).join('');
+        ${qSafe}…<br>
+        <span style="color:var(--dim)">${(r.ts||'').slice(5,16)} · ${(r.tokens||0).toLocaleString()} tok</span>
+      </div>`;}).join('');
   });
 }
 loadHistory();   // 页面加载即填充历史列表（此前漏调用：函数在但从不执行）
 
 // ---------- 渲染基础设施 ----------
-function resetTimeline(){
-  $('timeline').innerHTML = '';
+function beginTurnRender(){
+  // ★单轮渲染状态复位：同一会话追问时保留已有轮次，只复位本轮的状态
   curGroup = null; lastApprovalLi = null;
   $('approval').style.display = 'none';
+  $('replay_banner').style.display = 'none';
+  if (allExpanded) { allExpanded = false; const b = $('toggle_all_btn'); if (b) b.textContent = '⊞ 展开全部'; }
   const pc = $('pinned_checklist');
   if (pc) {
     pc.style.display = 'none';
@@ -301,6 +315,25 @@ function resetTimeline(){
     $('pinned_stat').textContent = '0 / 0 已核销 (0%)';
     $('pinned_fill').style.width = '0%';
   }
+  $('report_panel').style.display = 'none';
+  lastReportMd = ''; setReportButtons(false);
+}
+function resetTimeline(){
+  $('timeline').innerHTML = '';
+  turnCount = 0;
+  beginTurnRender();
+}
+// 用户输入卡片：一轮查询的视觉起点，其后所有事件节点归属该轮
+function addUserTurn(idx, q, ts, rid){
+  const div = document.createElement('div');
+  div.className = 'turn-q';
+  if (rid) div.dataset.rid = rid;
+  div.innerHTML = `<span class="turn-badge">第 ${idx} 轮</span>` +
+    `<span class="q-text">${esc(q)}</span>` +
+    `<span class="q-meta">${ts ? esc(String(ts)) : ''}${rid ? ' · ' + rid : ''}</span>`;
+  $('timeline').appendChild(div);
+  div.scrollIntoView({block:'start'});
+  return div;
 }
 function ensureGroup(n, title){
   if (curGroup && curGroup.n === String(n)) return curGroup.ul;
@@ -312,6 +345,8 @@ function ensureGroup(n, title){
   return curGroup.ul;
 }
 function addSub(sub, html, detailsHtml){
+  // 防御：事件缺 sub（旧存档回放/异常事件）时不崩——降级为独立卡片
+  if (sub == null) return addStandalone('note', html, detailsHtml);
   const ul = ensureGroup(sub.split('.')[0],
     sub.split('.')[0] === '0' ? '第 0 步 · 启动准备' : `第 ${sub.split('.')[0]} 步`);
   const li = document.createElement('li');
@@ -369,6 +404,10 @@ function renderEvent(ev, live){
   const sub = ev.sub;
   switch(ev.type){
 
+    case 'run_meta':
+      // 会话元信息（事件流头部）：回放旧运行后据此续接同一会话
+      if (ev.session_id && !sessionId) sessionId = ev.session_id;
+      break;
     case 'memory_inject':
       addSub(sub, `🧠 载入 <b>${ev.count}</b> 条长期偏好`,
         ev.text ? `<pre>${esc(ev.text)}</pre>` : ''); break;
@@ -381,8 +420,22 @@ function renderEvent(ev, live){
       addSub(sub, `🔌 ${esc(ev.msg)}`); break;
     case 'plan': {
       const subQs = (ev.sub_questions || []).map(sq => `<li><b>[${esc(sq.id || '')}] ${esc(sq.q || '')}</b><br><span style="color:#666">查证要点：${esc(sq.what_to_verify || '')}</span></li>`).join('');
+      // 与 step 节点同构的全量详单（旧存档无 detail 字段时自动省略①②③）
+      const pd = ev.detail || {};
+      const ptd = pd.token_detail || {};
+      const pmi = (pd.model_input || {}).messages || [];
+      const pmo = pd.model_output || {};
+      const pDetail = pd.model_input ?
+        `<b>① 规划调用的完整输入（请求体全量。无 tools——规划师只拆解问题，不看工具箱）</b>` +
+        `<pre>${esc(JSON.stringify(pmi, null, 1))}</pre>` +
+        `<b>② 规划模型的完整输出（全字段，key 和 value 一个不落）</b>` +
+        `<pre>${esc(JSON.stringify(pmo, null, 1))}</pre>` +
+        `<b>③ token明细</b>：输入 ${ptd.prompt ?? '?'} / 输出 ${ptd.completion ?? '?'} / ` +
+        `思考 ${ptd.reasoning ?? 0} / 缓存命中 ${ptd.cached ?? 0}<br>` : '';
       addSub(sub, `📋 规划大纲 · <b>${esc(ev.goal || '目标')}</b>` + (ev.ms ? ` (${ev.ms}ms)` : ''),
-        subQs ? `<ul style="margin:4px 0 8px 18px;padding:0;">${subQs}</ul><pre>${esc(JSON.stringify(ev.outline, null, 2))}</pre>` : `<pre>${esc(JSON.stringify(ev.outline, null, 2))}</pre>`);
+        pDetail +
+        (subQs ? `<b>④ 子问题拆解（动态看板与每轮进度注入的来源）</b>：<ul style="margin:4px 0 8px 18px;padding:0;">${subQs}</ul>` : '') +
+        `<b>⑤ 大纲 JSON（原文以【研究大纲】注入 system prompt）</b><pre>${esc(JSON.stringify(ev.outline, null, 2))}</pre>`);
       if (ev.sub_questions && ev.sub_questions.length) {
         updatePinnedChecklistFromPlan(ev.sub_questions, ev.goal);
       }
@@ -398,15 +451,15 @@ function renderEvent(ev, live){
       const mo = d.model_output || {};
       addSub(sub,
         `🧠 模型调用 → ` +
-        (ev.tools.length ? `工具调用 <b>${ev.tools.join('、')}</b>` : '✍️ 撰写最终报告') +
+        ((ev.tools || []).length ? `工具调用 <b>${esc(ev.tools.join('、'))}</b>` : '✍️ 撰写最终报告') +
         msBadge(ev.model_ms),
-        `<b>① 给到模型的完整输入（请求体全量：messages ${ev.total_messages} 条 + tools 说明书，零删减）</b>` +
+        `<b>① 给到模型的完整输入（请求体全量：messages ${ev.total_messages ?? '?'} 条 + tools 说明书，零删减）</b>` +
         `<pre>${esc(JSON.stringify(mi, null, 1))}</pre>` +
         `<b>② 模型的完整输出（全字段，key 和 value 一个不落）</b>：` +
         `<pre>${esc(JSON.stringify(mo, null, 1))}</pre>` +
         `<b>③ token明细</b>：输入 ${td.prompt ?? '?'} / 输出 ${td.completion ?? '?'} / ` +
         `思考 ${td.reasoning ?? 0} / 缓存命中 ${td.cached ?? 0}`);
-      if (TIERS[tier] != null) {
+      if (TIERS[tier] != null && ev.prompt_tokens != null) {
         $('budget_fill').style.width =
           Math.min(100, Math.round(ev.prompt_tokens / TIERS[tier] * 100)) + '%';
       }
@@ -469,12 +522,12 @@ function renderEvent(ev, live){
 
     case 'approval_request':
       $('approval').style.display = live ? '' : 'none';
-      $('approval_text').textContent = `${ev.tool}(${ev.args.slice(0,80)}) —— ${ev.reason}`;
+      $('approval_text').textContent = `${ev.tool}(${(ev.args||'').slice(0,80)}) —— ${ev.reason||''}`;
       lastApprovalLi = addSub(sub,
-        live ? `⚠️ <b>等待人工确认</b>：${ev.tool}`
-             : `⚠️ 人工确认：${ev.tool}`,
+        live ? `⚠️ <b>等待人工确认</b>：${esc(ev.tool)}`
+             : `⚠️ 人工确认：${esc(ev.tool)}`,
         `<b>危险原因</b>：${esc(ev.reason || '')}<br>` +
-        `<b>完整参数</b>：<pre>${esc(ev.args)}</pre>`, 'approval');
+        `<b>完整参数</b>：<pre>${esc(ev.args||'')}</pre>`);
       break;
     case 'approval_result':
       $('approval').style.display = 'none';
@@ -547,7 +600,7 @@ function renderEvent(ev, live){
         if (metaEl) metaEl.textContent = `（${metaStr}）`;
 
         $('report_panel').style.display = '';
-        $('report_panel').scrollIntoView({block:'start'});
+        if (live) $('report_panel').scrollIntoView({block:'start'});   // 回放时不抢滚动，用户正在看执行流
       }
       setReportButtons(!!lastReportMd);
       break;
@@ -596,9 +649,9 @@ async function copyMd(){
 // ---------- 会话管理 ----------
 function newSession(){
   sessionId = '';
+  try { localStorage.removeItem('workbench_sid'); } catch (e) {}
   resetTimeline();
-  $('report_panel').style.display = 'none';
-  lastReportMd = ''; setReportButtons(false);
+  $('replay_banner').style.display = 'none';
   $('question').value = ''; $('question').focus();
 }
 
@@ -607,34 +660,69 @@ async function start(){
   const q = $('question').value.trim();
   if (!q) { alert('先输入研究问题'); return; }
   if (es) es.close();
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  esTries = 0; evIdx = 0;
   doneSeen = false;
   liveMode = true;
   if (isZenMode) toggleZenMode();
   $('start').disabled = true; $('stopbtn').disabled = false;
   setTiersEnabled(false);
-  resetTimeline();
-  $('report_panel').style.display = 'none';
-  lastReportMd = ''; setReportButtons(false);   // 新研究开始：清空报告原文与按钮态
+  // ★同一会话的多轮查询：不清空时间线，保留之前的轮次，只复位本轮渲染状态
+  if (sessionId) {
+    turnCount += 1;
+    beginTurnRender();
+  } else {
+    resetTimeline();
+    turnCount = 1;
+  }
+  $('budget_fill').style.width = '0%';
   startRunStatus();
-  const r = await fetch('/api/research', {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({question:q, tier, session_id: sessionId})});
-  const d = await r.json();
-  runId = d.run_id;
-  if (d.session_id) sessionId = d.session_id;   // 首次运行后记住
-  listen();
+  try {
+    const r = await fetch('/api/research', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:q, tier, session_id: sessionId})});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    runId = d.run_id;
+    if (d.session_id) sessionId = d.session_id;   // 首次运行后记住
+    try { localStorage.setItem('workbench_sid', sessionId); } catch (e) {}   // 刷新后恢复会话视图
+    // 用户输入卡片：本轮查询在时间线上的起点（其后事件节点归属本轮）
+    addUserTurn(turnCount, q,
+      new Date().toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}),
+      runId);
+    listen();
+  } catch (err) {
+    // 启动失败（服务重启/网络错误）：恢复按钮态并明示，而不是永久卡死
+    turnCount -= 1;   // 本轮没有真正开始，编号回退
+    stopRunStatus();
+    $('start').disabled = false; $('stopbtn').disabled = true; setTiersEnabled(true);
+    addStandalone('approval', `❌ 无法启动运行：${esc(String(err))}。请确认服务是否在运行，然后重试。`);
+  }
 }
 
+let esTries = 0, evIdx = 0, reconnectTimer = null;   // 断流重连：已试次数 / 已收事件数 / 重连定时器
+
 function listen(){
-  es = new EventSource(`/api/research/${runId}/events`);
-  es.onmessage = e => { renderEvent(JSON.parse(e.data), true); };
+  // ★since=evIdx：断点续传——重连时只取没收到的事件，不重放不漏发
+  es = new EventSource(`/api/research/${runId}/events?since=${evIdx}`);
+  es.onmessage = e => {
+    evIdx++; renderEvent(JSON.parse(e.data), true);
+    if (esTries) { esTries = 0; $('rs_step').textContent = ''; }   // 重连成功：复位提示
+  };
   es.onerror = () => {
     es.close();
-    if (!doneSeen) {   // 运行未完成却断流 = 异常，明确告知而不是无声卡住
+    if (doneSeen || !liveMode) return;
+    // ★自动重连：运行未完成却断流时先重试（浏览器/WebView 会在长静默期掐掉空闲连接），
+    //   而不是第一次报错就永久放弃显示——运行本身还在后台继续
+    if (esTries < 5) {
+      esTries++;
+      $('rs_step').textContent = ` ⚠️ 连接中断，自动重连中(${esTries}/5)…`;
+      reconnectTimer = setTimeout(() => { if (!doneSeen && liveMode) listen(); }, 800 * esTries);
+    } else {
       stopRunStatus();
       $('start').disabled = false; $('stopbtn').disabled = true; setTiersEnabled(true);
-      addStandalone('approval', '⚠️ 实时连接中断（运行通常仍在后台继续）。' +
-        '请稍后刷新页面，或从左侧历史记录点击该运行查看结果。');
+      addStandalone('approval', '⚠️ 实时连接多次重连失败，已停止实时显示（运行通常仍在后台继续）。' +
+        '请稍后从左侧历史记录点击该运行查看完整结果。');
     }
   };
 }
@@ -645,31 +733,95 @@ $('question').addEventListener('keydown', e => {
 });
 
 // ---------- 历史回放 ----------
-async function loadRun(id){
-  if (es) es.close();
-  liveMode = false;
-  runId = id;
-  if (isZenMode) toggleZenMode();
-  resetTimeline();
-  const r = await fetch(`/api/runs/${id}/events`);
-  const d = await r.json();
-  // RunLog 元信息（问题/停止原因/tokens）
+// 单运行回放（旧存档无会话信息时的兜底视图）
+function renderSingleRunView(id, d){
   const meta = d.meta || {};
-  const qText = (meta.question || '').slice(0, 40) || '（未知）';
-  // 标记回放模式横幅
   $('replay_banner').innerHTML =
     `<b>▶ 回放模式</b> · 运行 <code>${id}</code>` +
     ` · 停止原因: <b>${meta.stop_reason || '未知'}</b> · 总 token: ${meta.tokens ?? '?'}` +
     ` <span style="color:var(--dim)">（只读，不影响后台）</span>` +
     ` <button class="rbtn" onclick="location.href=location.pathname" style="margin-left:10px">⟳ 回到最新运行</button>`;
   $('replay_banner').style.display = '';
-  if (!d.events.length) {
+  if (!(d.events||[]).length) {
     addStandalone('', '该运行没有详细事件记录（早于事件存档功能上线）。');
   } else {
     d.events.forEach(ev => renderEvent(ev, false));
   }
   document.querySelectorAll('.run-item').forEach(el =>
     el.classList.toggle('selrun', el.dataset.rid === id));
+}
+// ★会话视图：一次会话的全部轮次纵向还原——每轮 = 用户输入卡片 + 该轮完整事件流
+async function loadSessionView(sid, focusRunId, focusEvents){
+  if (es) es.close();
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  liveMode = false;
+  runId = focusRunId || null;
+  sessionId = sid;
+  if (isZenMode) toggleZenMode();
+  resetTimeline();
+  let runs = [];
+  try {
+    const r = await fetch(`/api/sessions/${sid}`);
+    if (r.ok) { const d = await r.json(); runs = d.runs || []; }
+  } catch (e) {}
+  if (!runs.length) {
+    // 会话元数据缺失（旧数据/已清理）：退化为单运行回放
+    if (focusEvents) { renderSingleRunView(focusRunId, {events: focusEvents, meta: {}}); return; }
+    addStandalone('', '该会话没有可回放的运行记录。');
+    return;
+  }
+  for (const run of runs) {
+    turnCount += 1;
+    addUserTurn(turnCount, run.question || '', (run.ts || '').slice(5, 16), run.run_id);
+    let evs = null;
+    if (focusEvents && run.run_id === focusRunId) {
+      evs = focusEvents;   // 已取过的运行不重复请求
+    } else {
+      try {
+        const r = await fetch(`/api/runs/${run.run_id}/events`);
+        const d = await r.json();
+        evs = d.events || [];
+      } catch (e) { evs = []; }
+    }
+    if (!evs.length) {
+      addStandalone('', '该轮运行没有详细事件记录（早于事件存档功能上线）。');
+    } else {
+      evs.forEach(ev => renderEvent(ev, false));
+    }
+  }
+  $('replay_banner').innerHTML =
+    `<b>▶ 会话回放</b> · 会话 <code>${sid}</code> · 共 ${turnCount} 轮查询` +
+    ` <span style="color:var(--dim)">（只读，不影响后台；在下方输入将作为新一轮继续此会话）</span>` +
+    ` <button class="rbtn" onclick="location.href=location.pathname" style="margin-left:10px">⟳ 回到最新</button>`;
+  $('replay_banner').style.display = '';
+  document.querySelectorAll('.run-item').forEach(el =>
+    el.classList.toggle('selrun', el.dataset.rid === focusRunId));
+  if (focusRunId) {
+    const card = document.querySelector(`.turn-q[data-rid="${focusRunId}"]`);
+    if (card) card.scrollIntoView({block:'start'});
+  }
+}
+async function loadRun(id){
+  if (es) es.close();
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  liveMode = false;   // 取消挂起的重连（重连回调检查 liveMode）
+  if (isZenMode) toggleZenMode();
+  resetTimeline();
+  $('approval').style.display = 'none';
+  const r = await fetch(`/api/runs/${id}/events`);
+  const d = await r.json();
+  // ★识别所属会话：优先 RunLog meta，其次事件流头部的 run_meta——
+  //   命中则还原整个会话的多轮时间线，而不是只显示这一轮
+  let sid = (d.meta && d.meta.session_id) || '';
+  if (!sid) {
+    const rm = (d.events || []).find(e => e.type === 'run_meta');
+    if (rm && rm.session_id) sid = rm.session_id;
+  }
+  if (sid) {
+    await loadSessionView(sid, id, d.events || []);
+    return;
+  }
+  renderSingleRunView(id, d);   // 旧存档（无会话信息）：单运行回放
 }
 
 async function stopRun(){
@@ -761,6 +913,14 @@ window.addEventListener('keydown', e => {
     toggleZenMode();
   }
 });
+
+// ---------- 页面加载：恢复上次会话的完整多轮时间线 ----------
+// （run_meta 事件里带 session_id：即使上次是回放进入的会话，追问也能无缝续接）
+(function restoreLastSession(){
+  let sid = '';
+  try { sid = localStorage.getItem('workbench_sid') || ''; } catch (e) {}
+  if (sid) loadSessionView(sid);
+})();
 </script>
 </body>
 </html>

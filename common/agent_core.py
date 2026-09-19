@@ -384,26 +384,39 @@ class ResearchAgent:
         # 节点：规划（JSON mode 生成研究大纲，计入 Budget 且返回 outline）
         outline = {}
         t_plan = time.time()
+        plan_messages = [
+            {"role": "system",
+             "content": "你是研究规划师。针对用户问题输出JSON研究大纲，格式："
+                        '{"goal":"一句话目标","sub_questions":[{"id":1,"q":"子问题",'
+                        '"what_to_verify":"要查证什么"}],"constraints":["约束"]}。'
+                        "硬性要求：子问题不超过3个、what_to_verify一句话以内——"
+                        "大纲必须在约10步内可调研完成，贪多会导致任务永远做不完。只规划，不执行。"},
+            {"role": "user", "content": question},
+        ]
         try:
             plan_msg, plan_usage = call_llm(
                 client,
-                messages=[
-                    {"role": "system",
-                     "content": "你是研究规划师。针对用户问题输出JSON研究大纲，格式："
-                                '{"goal":"一句话目标","sub_questions":[{"id":1,"q":"子问题",'
-                                '"what_to_verify":"要查证什么"}],"constraints":["约束"]}。'
-                                "硬性要求：子问题不超过3个、what_to_verify一句话以内——"
-                                "大纲必须在约10步内可调研完成，贪多会导致任务永远做不完。只规划，不执行。"},
-                    {"role": "user", "content": question},
-                ],
+                messages=plan_messages,
                 response_format={"type": "json_object"},
             )
             budget.add(plan_usage)
             outline = json.loads(plan_msg.content or "{}")
+            # ★详单与 step 节点同构：完整输入 / 全字段输出 / token 明细（Web 端全量展示）
+            p_cached = getattr(getattr(plan_usage, "prompt_tokens_details", None),
+                               "cached_tokens", None)
+            p_reasoning = getattr(getattr(plan_usage, "completion_tokens_details", None),
+                                  "reasoning_tokens", None)
             self._emit_sub("plan", outline=outline, goal=outline.get("goal", ""),
                            sub_questions=outline.get("sub_questions", []),
                            ms=round((time.time() - t_plan) * 1000),
-                           prompt_tokens=plan_usage.prompt_tokens)
+                           prompt_tokens=plan_usage.prompt_tokens,
+                           detail={
+                               "model_input": {"messages": plan_messages},  # 规划调用无 tools：规划师只拆问题
+                               "model_output": plan_msg.model_dump(),
+                               "token_detail": {"prompt": plan_usage.prompt_tokens,
+                                                "completion": plan_usage.completion_tokens,
+                                                "cached": p_cached,
+                                                "reasoning": p_reasoning}})
         except Exception as e:
             errors.append(f"plan: {type(e).__name__}: {str(e)[:150]}")
             outline = {"goal": question, "sub_questions": [], "constraints": []}
@@ -529,8 +542,8 @@ class ResearchAgent:
                     _dump_structure(messages, rec_hint="hard_stop")
                 forced_msg = _build_forced_final_msg()
                 messages.append({"role": "user", "content": forced_msg})
-                self.emit("budget", used=budget.used, max=budget.max,
-                          note="预算达硬线，移除工具强制结题")
+                self._emit_sub("budget", used=budget.used, max=budget.max,
+                               note="预算达硬线，移除工具强制结题")   # ★带sub：前端addSub依赖层级编号
                 t_fin = time.time()  # ★ 修复：提前记录 t_fin，避免 except 分支报 NameError
                 try:
                     fmsg, fusage = call_llm(client, messages)  # ★ 无 tools：不可能再点菜
@@ -648,9 +661,9 @@ class ResearchAgent:
             _trim_unanswered_tool_calls(messages)   # ⚠P40：末尾未应答点菜作废
             forced_msg = _build_forced_final_msg()
             messages.append({"role": "user", "content": forced_msg})
-            self.emit("budget", used=budget.used,
-                      max=(budget.max if budget.max is not None else 0),
-                      note="步数耗尽：强制无工具结题")
+            self._emit_sub("budget", used=budget.used,
+                           max=(budget.max if budget.max is not None else 0),
+                           note="步数耗尽：强制无工具结题")   # ★带sub：前端addSub依赖层级编号
             t_fin = time.time()
             try:
                 fmsg, fusage = call_llm(client, messages)   # 无 tools：不可能再点菜
@@ -724,13 +737,17 @@ class ResearchAgent:
             self.session.save_context(
                 summary=f"已完成 {step} 步研究，提取到 {len(self.session.read_notes())} 字符笔记",
                 key_findings=key_findings[-5:], pending=pending)
-            self.session.add_run(self.run_id or rec["run_id"], question[:80])
+            # ★运行注册由 webapp 在启动时完成（app.py session.add_run），
+            #   这里不再重复注册——否则会话历史每个 run 记两条，
+            #   且此时 rec 尚未定义（log_run 在下方才调用），run_id 为空时会 NameError
 
         rec = log_run(run_id=self.run_id, impl=self.impl,
                       question=question[:80], steps=step,
                       tool_calls=tool_sequence, tokens=budget.used,
                       budget_max=budget.max, stop_reason=stopped_reason,
-                      errors=errors, extra={"new_preferences": added})
+                      errors=errors,
+                      extra={"new_preferences": added,
+                             "session_id": (self.session.id if self.session else "")})
         self.emit("final", used=budget.used, max=budget.max,
                   stop_reason=stopped_reason, run_id=rec["run_id"],
                   steps=step, answer=final,

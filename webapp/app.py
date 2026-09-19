@@ -150,6 +150,31 @@ class ResearchIn(BaseModel):
     session_id: str = ""      # 空 = 新会话
 
 
+def _last_session_report(session, exclude_run: str) -> str | None:
+    """取本会话最近一次有定稿报告的运行（事件存档里 final.answer）。
+    从最新往旧找，final 事件在文件尾部所以倒序扫描很快。"""
+    if not session:
+        return None
+    for rec in reversed(session.meta.get("runs", [])):
+        rid = rec.get("run_id", "")
+        if not rid or rid == exclude_run:
+            continue
+        p = EV_DIR / f"events_{rid}.jsonl"
+        if not p.exists():
+            continue
+        for line in reversed(p.read_text(encoding="utf-8").splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if e.get("type") == "final" and (e.get("answer") or "").strip():
+                return e["answer"]
+    return None
+
+
 @app.post("/api/research")
 def start_research(body: ResearchIn):
     run_id = uuid.uuid4().hex[:8]
@@ -170,6 +195,22 @@ def start_research(body: ResearchIn):
     # ★运行线程 = Agent 调研 + 定稿后统一投递（投递在宿主层，不进内核）
     def _target():
         try:
+            # ★纯发送路由：会话里已有报告、本轮只要求发送 → 完全跳过研究循环
+            #   （不规划、不检索、不重写报告），直接取上一轮定稿进入投递
+            if report_delivery.is_pure_send_request(body.question):
+                prev = _last_session_report(session, exclude_run=run_id)
+                if not prev:
+                    agent.emit("note", text="当前会话还没有已生成的报告可发送，"
+                                            "请先完成一次调研（提问时再带上邮箱即可）。")
+                    return
+                agent.emit("note", text="检测到纯发送请求：跳过调研，"
+                                        "直接使用本会话上一轮的报告定稿。")
+                report_delivery.post_run_delivery(
+                    agent.emit, body.question, prev, notes_text="",
+                    wait_decision=agent.wait_send_decision,
+                    verbatim=not report_delivery.has_content_spec(body.question))
+                return
+
             result = agent.run(body.question)
             agent.run_result = result
             notes_text = ""

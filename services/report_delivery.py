@@ -30,6 +30,27 @@ def detect_send_intent(question: str) -> dict | None:
     return {"recipient": emails[0]}
 
 
+# 调研动词：出现任何一个 = 用户除了发送还要"查新东西"，必须走研究循环
+RESEARCH_KEYWORDS = ("查", "调研", "搜索", "研究", "分析", "对比", "了解",
+                     "总结", "梳理", "统计", "整理", "写一份", "看看", "为什么", "如何")
+
+
+def is_pure_send_request(question: str) -> bool:
+    """纯发送请求：有发送意图、且不含任何调研动词 → 跳过研究循环直接投递。
+    '将这份报告发送到 a@b.com' → True；'查就业率并发到 a@b.com' → False（还要查）。"""
+    if not detect_send_intent(question):
+        return False
+    return not any(k in (question or "") for k in RESEARCH_KEYWORDS)
+
+
+# 内容限定词：纯发送时若用户点名了要哪部分（"只发结论"），需 LLM 组装而非全文直发
+CONTENT_SPEC_WORDS = ("结论", "摘要", "精简", "只发", "第一", "第二", "第三", "部分", "节选")
+
+
+def has_content_spec(question: str) -> bool:
+    return any(k in (question or "") for k in CONTENT_SPEC_WORDS)
+
+
 def compose_body(question: str, final_report: str, notes_text: str) -> str:
     """按用户对'发送什么内容'的要求，从素材中动态组装邮件正文。
 
@@ -61,18 +82,21 @@ def compose_body(question: str, final_report: str, notes_text: str) -> str:
 
 
 def post_run_delivery(emit, question: str, final_report: str,
-                      notes_text: str, wait_decision, timeout: int = CONFIRM_TIMEOUT):
+                      notes_text: str, wait_decision, timeout: int = CONFIRM_TIMEOUT,
+                      verbatim: bool = False):
     """统一投递流程：在宿主的运行线程里执行（阻塞等用户决定，不占 Agent 循环）。
 
     emit          : 事件推送函数（webapp 注入 agent.emit，实时 + 落盘 + 回放同源）
     wait_decision : 阻塞等待用户决定的函数（webapp 注入），返回 bool
+    verbatim      : True = 跳过 LLM 组装，原样发送 final_report（纯发送请求直取上一轮定稿）
     """
     intent = detect_send_intent(question)
     if not intent:
         return   # 无发送意图：静默结束，不多话
 
     recipient = intent["recipient"]
-    body = compose_body(question, final_report, notes_text)
+    body = (final_report or "").strip() if verbatim else compose_body(
+        question, final_report, notes_text)
     if not body.strip():
         emit("send_result", status="error", recipient=recipient,
              error="邮件正文为空：研究未产出可发送内容")

@@ -604,6 +604,9 @@ function renderEvent(ev, live){
       }
       setReportButtons(!!lastReportMd);
       break;
+    case 'note':
+      addStandalone('note', `ℹ️ ${esc(ev.text || ev.note || '')}`);
+      break;
     case 'send_request': {
       // 邮件发送确认卡（报告定稿后统一弹出）：实时模式带按钮，回放只读
       const btns = live ?

@@ -98,6 +98,41 @@
                  font-weight:700; margin-right:7px; }
   ul.subs details { margin-top:5px; }
   ul.subs details summary { color:var(--acc); font-size:11px; cursor:pointer; }
+
+  /* 快捷 Prompt Chips */
+  .chips-row { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 3px; align-items:center; }
+  .chips-label { font-size:11.5px; color:var(--dim); font-weight:600; }
+  .chip { cursor:pointer; background:#eef3fb; color:#3b5278; border:1px solid #d4e0f2;
+          border-radius:99px; padding:3px 10px; font-size:11.5px; user-select:none;
+          transition:all .15s ease; }
+  .chip:hover { background:#dce8fc; color:var(--acc); border-color:#b4cdfc; transform:translateY(-1px); }
+  .kbd-hint { display:inline-block; font-family:ui-monospace,Monaco,monospace; font-size:10.5px;
+              background:rgba(255,255,255,0.22); border-radius:4px; padding:1px 5px; margin-left:5px;
+              vertical-align:middle; }
+
+  /* 常驻动态任务看板卡片 */
+  .pinned-card { background:#f8fafd; border:1px solid #d2e1f5; border-left:4px solid var(--acc);
+                 border-radius:8px; padding:10px 13px; margin:8px 0 12px; box-shadow:0 1px 3px rgba(0,0,0,0.03); }
+  .pinned-hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .pinned-title { font-size:12.5px; font-weight:700; color:#1c2d4c; }
+  .pinned-stat { font-size:12px; color:var(--acc); font-weight:600; }
+  .pinned-bar { height:6px; background:#e2ebf7; border-radius:99px; overflow:hidden; margin-bottom:8px; }
+  .pinned-fill { height:100%; background:var(--acc); width:0%; transition:width .35s ease; }
+  .pinned-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px; font-size:12px; }
+  .pinned-list li { line-height:1.5; color:#2e384d; }
+  .pinned-list .p-sum { font-size:11px; color:#137333; margin-left:22px; background:#eaf5ee;
+                        padding:2px 7px; border-radius:4px; display:inline-block; margin-top:2px; }
+
+  /* 全屏阅读模式 (Zen Mode) */
+  #report_panel.zen-active { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999;
+                             margin:0 !important; border-radius:0; border:none; padding:20px 40px;
+                             box-sizing:border-box; background:#fff; display:flex; flex-direction:column;
+                             box-shadow:none; overflow:hidden; }
+  #report_panel.zen-active .report { max-height:none !important; flex:1; overflow-y:auto; font-size:15px;
+                                     line-height:1.75; padding:15px 30px 40px; max-width:980px; margin:0 auto;
+                                     width:100%; border:none; background:#fff; }
+  #report_panel.zen-active h2 { max-width:980px; width:100%; margin:0 auto 12px; padding-bottom:10px;
+                                border-bottom:1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -134,15 +169,38 @@
         <button class="tier" data-t="unlimited">🚀 深度+ · 不限额度</button>
       </div>
       <textarea id="question" placeholder="输入研究问题，如：对比 Coze 和 Dify 的收费模式"></textarea>
+      <div class="chips-row">
+        <span class="chips-label">💡 推荐场景：</span>
+        <span class="chip" onclick="applyPrompt('对比飞书、Notion、语雀个人与企业版的定价策略及付费档位差异', 'deep')">🚀 竞品定价对比</span>
+        <span class="chip" onclick="applyPrompt('微信小程序关于个人开发者认证与类目资质的最新审核要求', 'standard')">🔍 行业合规政策</span>
+        <span class="chip" onclick="applyPrompt('对比 LangGraph、CrewAI 与原生 Agentic Loop 的优劣势及工程落地成本', 'standard')">📊 技术方案选型</span>
+        <span class="chip" onclick="applyPrompt('DeepSeek API 目前的模型架构、计费标准与调用优化建议', 'quick')">⚡ 模型API速查</span>
+      </div>
       <div class="btnrow">
-        <button id="start" onclick="start()">🚀 开始研究</button>
+        <button id="start" onclick="start()">🚀 开始研究 <kbd class="kbd-hint">⌘↵</kbd></button>
         <button id="stopbtn" class="ghost" onclick="stopRun()" disabled>⏹ 中止</button>
       </div>
       <div class="hint">含"把报告发给某人邮箱"的问题会触发危险操作确认；写类工具同样需要批准。</div>
     </div>
 
     <div class="panel" style="margin-top:14px">
-      <h2>执行流（实时）</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h2 style="margin:0">执行流（实时）</h2>
+        <div style="display:flex;gap:6px;">
+          <button class="rbtn" id="toggle_all_btn" onclick="toggleAllDetails()">⊞ 展开全部</button>
+        </div>
+      </div>
+
+      <!-- 常驻动态任务看板卡片 -->
+      <div id="pinned_checklist" class="pinned-card" style="display:none;">
+        <div class="pinned-hdr">
+          <span class="pinned-title">📋 任务核销看板</span>
+          <span class="pinned-stat" id="pinned_stat">0 / 0 已核销 (0%)</span>
+        </div>
+        <div class="pinned-bar"><div class="pinned-fill" id="pinned_fill" style="width:0%"></div></div>
+        <ul class="pinned-list" id="pinned_list"></ul>
+      </div>
+
       <div class="placeholder" id="timeline_placeholder" style="display:none"></div>
       <div id="timeline"><div class="placeholder">等待运行…</div></div>
       <div id="replay_banner" class="replaybar" style="display:none; margin-top:10px; padding:8px 12px;
@@ -163,8 +221,12 @@
 
     <div class="panel" style="margin-top:14px;display:none" id="report_panel">
       <h2 style="display:flex;align-items:center;justify-content:space-between;">
-        <span>最终报告</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span>最终报告</span>
+          <span id="report_meta" style="font-size:11.5px;color:var(--dim);font-weight:normal;"></span>
+        </span>
         <span style="display:flex;gap:8px;">
+          <button class="rbtn" id="zenbtn" onclick="toggleZenMode()">⛶ 全屏阅读</button>
           <button class="rbtn" id="copybtn" onclick="copyMd()" disabled>📋 复制 MD</button>
           <button class="rbtn" id="dlbtn" onclick="downloadMd()" disabled>⬇ 下载 .md</button>
         </span>
@@ -226,6 +288,13 @@ function resetTimeline(){
   $('timeline').innerHTML = '';
   curGroup = null; lastApprovalLi = null;
   $('approval').style.display = 'none';
+  const pc = $('pinned_checklist');
+  if (pc) {
+    pc.style.display = 'none';
+    $('pinned_list').innerHTML = '';
+    $('pinned_stat').textContent = '0 / 0 已核销 (0%)';
+    $('pinned_fill').style.width = '0%';
+  }
 }
 function ensureGroup(n, title){
   if (curGroup && curGroup.n === String(n)) return curGroup.ul;
@@ -308,6 +377,9 @@ function renderEvent(ev, live){
       const subQs = (ev.sub_questions || []).map(sq => `<li><b>[${esc(sq.id || '')}] ${esc(sq.q || '')}</b><br><span style="color:#666">查证要点：${esc(sq.what_to_verify || '')}</span></li>`).join('');
       addSub(sub, `📋 规划大纲 · <b>${esc(ev.goal || '目标')}</b>` + (ev.ms ? ` (${ev.ms}ms)` : ''),
         subQs ? `<ul style="margin:4px 0 8px 18px;padding:0;">${subQs}</ul><pre>${esc(JSON.stringify(ev.outline, null, 2))}</pre>` : `<pre>${esc(JSON.stringify(ev.outline, null, 2))}</pre>`);
+      if (ev.sub_questions && ev.sub_questions.length) {
+        updatePinnedChecklistFromPlan(ev.sub_questions, ev.goal);
+      }
       break;
     }
 
@@ -349,6 +421,7 @@ function renderEvent(ev, live){
       }).join('');
       addSub(sub, `📌 <b>动态待办看板更新</b>（${ev.completed}/${ev.total} 已核销）`,
         `<ul style="margin:4px 0 6px 4px;padding:0;line-height:1.6;list-style:none;">${items}</ul>`);
+      updatePinnedChecklist(ev.completed, ev.total, ev.items);
       break;
     }
     case 'budget':
@@ -460,6 +533,13 @@ function renderEvent(ev, live){
         } else {
           $('report').textContent = safe;
         }
+        // 计算元数据
+        const wordCount = lastReportMd.length;
+        const sec = ev.total_ms != null ? (ev.total_ms / 1000).toFixed(1) + 's' : '';
+        const metaStr = `约 ${wordCount.toLocaleString()} 字` + (sec ? ` · 耗时 ${sec}` : '') + ` · 消耗 ${ev.used.toLocaleString()} tok`;
+        const metaEl = $('report_meta');
+        if (metaEl) metaEl.textContent = `（${metaStr}）`;
+
         $('report_panel').style.display = '';
         $('report_panel').scrollIntoView({block:'start'});
       }
@@ -514,6 +594,7 @@ async function start(){
   if (es) es.close();
   doneSeen = false;
   liveMode = true;
+  if (isZenMode) toggleZenMode();
   $('start').disabled = true; $('stopbtn').disabled = false;
   setTiersEnabled(false);
   resetTimeline();
@@ -552,6 +633,7 @@ async function loadRun(id){
   if (es) es.close();
   liveMode = false;
   runId = id;
+  if (isZenMode) toggleZenMode();
   resetTimeline();
   const r = await fetch(`/api/runs/${id}/events`);
   const d = await r.json();
@@ -584,6 +666,85 @@ async function respond(approved){
     body: JSON.stringify({approved})});
   $('approval').style.display = 'none';
 }
+
+// ---------- 快捷 Prompt 场景填入 ----------
+function applyPrompt(text, tierName){
+  const ta = $('question');
+  if (!ta) return;
+  ta.value = text;
+  if (tierName) {
+    const btn = document.querySelector(`#tiers .tier[data-t="${tierName}"]`);
+    if (btn) btn.click();
+  }
+  ta.focus();
+}
+
+// ---------- 常驻动态任务看板卡片 ----------
+function updatePinnedChecklist(completed, total, items){
+  const card = $('pinned_checklist');
+  if (!card) return;
+  card.style.display = 'block';
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  $('pinned_stat').textContent = `${completed} / ${total} 已核销 (${pct}%)`;
+  $('pinned_fill').style.width = pct + '%';
+  const list = $('pinned_list');
+  list.innerHTML = (items || []).map(it => {
+    const icon = it.status === 'completed' ? '✅' : (it.status === 'in_progress' ? '⏳' : '⚪');
+    const color = it.status === 'completed' ? '#137333' : (it.status === 'in_progress' ? '#b06000' : '#475569');
+    const bold = it.status !== 'pending' ? 'font-weight:600' : '';
+    return `<li>` +
+      `<span>${icon} <b style="color:${color};${bold}">[子问题 ${esc(it.id)}]</b> ${esc(it.q)}</span>` +
+      (it.summary ? `<div class="p-sum">↳ 查证结论: ${esc(it.summary)}</div>` : '') +
+    `</li>`;
+  }).join('');
+}
+
+function updatePinnedChecklistFromPlan(sub_questions, goal){
+  if (!sub_questions || !sub_questions.length) return;
+  const items = sub_questions.map(sq => ({
+    id: sq.id,
+    q: sq.q,
+    status: 'pending',
+    summary: ''
+  }));
+  updatePinnedChecklist(0, items.length, items);
+}
+
+// ---------- 步骤详情一键展开 / 收起 ----------
+let allExpanded = false;
+function toggleAllDetails(){
+  allExpanded = !allExpanded;
+  document.querySelectorAll('#timeline details.ev').forEach(d => {
+    d.open = allExpanded;
+  });
+  const btn = $('toggle_all_btn');
+  if (btn) btn.textContent = allExpanded ? '⊟ 全部收起' : '⊞ 展开全部';
+}
+
+// ---------- 全屏沉浸式阅读模式 (Zen Mode) ----------
+let isZenMode = false;
+function toggleZenMode(){
+  isZenMode = !isZenMode;
+  const panel = $('report_panel');
+  const btn = $('zenbtn');
+  if (!panel || !btn) return;
+  if (isZenMode) {
+    panel.classList.add('zen-active');
+    document.body.style.overflow = 'hidden';
+    btn.textContent = '🗗 退出全屏 (Esc)';
+  } else {
+    panel.classList.remove('zen-active');
+    document.body.style.overflow = '';
+    btn.textContent = '⛶ 全屏阅读';
+  }
+}
+
+// 监听 Esc 退出全屏阅读
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && isZenMode) {
+    toggleZenMode();
+  }
+});
 </script>
 </body>
 </html>

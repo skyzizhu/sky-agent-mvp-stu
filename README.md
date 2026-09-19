@@ -91,6 +91,8 @@ flowchart TD
     end
 ```
 
+> 查看器不渲染 Mermaid 时可直接看导出图：[docs/flowchart.png](docs/flowchart.png)
+
 **Harness = 依赖注入**：内核只有一份（`common/agent_core.py`），五种 IO 全部由宿主注入——同一内核跑在两种宿主上：
 
 | 注入点 | CLI 宿主 | Web 工作台宿主 |

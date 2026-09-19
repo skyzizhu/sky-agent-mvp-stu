@@ -84,22 +84,62 @@ def _cli_approver(tool: str, args_json: str):
     return ask_human(tool, args_json)
 
 
-def send_report(recipient: str, subject: str) -> str:
-    """危险工具示例：模拟对外发送（MVP 不真发）。"""
-    return json.dumps({"status": "sent(mock)", "recipient": recipient,
-                       "subject": subject}, ensure_ascii=False)
+def send_report(recipient: str, subject: str, content: str = "") -> str:
+    """对外发送报告邮件（危险工具）。已配置 SMTP（.env 四项）时真实发送；
+    未配置时降级为模拟发送（sent(mock)），保持 MVP 演示可用。"""
+    if not (config.SMTP_HOST and config.SMTP_USER and config.SMTP_AUTH_CODE):
+        return json.dumps({"status": "sent(mock)",
+                           "note": "未配置 SMTP，本次为模拟发送；在 .env 填写 "
+                                   "SMTP_HOST/SMTP_USER/SMTP_AUTH_CODE 后自动启用真实发送",
+                           "recipient": recipient, "subject": subject}, ensure_ascii=False)
+    if not content.strip():
+        # 正文缺省：读当前会话的调研笔记全文作为邮件正文（成果不能丢）
+        notes_p = tools_mod._current_notes_file()
+        if notes_p and Path(notes_p).exists():
+            content = Path(notes_p).read_text(encoding="utf-8").strip()
+    if not content.strip():
+        return ("错误：邮件正文为空且当前会话没有调研笔记。"
+                "请先完成调研，或用 content 参数提供正文。")
+    try:
+        import smtplib
+        import ssl as _ssl
+        from email.header import Header
+        from email.mime.text import MIMEText
+        from email.utils import formataddr
+        msg = MIMEText(content, "plain", "utf-8")
+        msg["Subject"] = Header(subject, "utf-8")
+        msg["From"] = formataddr((str(Header("研究 Agent", "utf-8")), config.SMTP_USER))
+        msg["To"] = recipient
+        if int(config.SMTP_PORT) == 465:   # 隐式 SSL（163/126/yeah 推荐）
+            server = smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT,
+                                      context=_ssl.create_default_context(), timeout=30)
+        else:                              # 587/25 走 STARTTLS 明文升级
+            server = smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=30)
+            server.starttls(context=_ssl.create_default_context())
+        with server:
+            server.login(config.SMTP_USER, config.SMTP_AUTH_CODE)
+            server.sendmail(config.SMTP_USER, [recipient], msg.as_string())
+        return json.dumps({"status": "sent", "recipient": recipient,
+                           "subject": subject, "content_chars": len(content)},
+                          ensure_ascii=False)
+    except Exception as e:
+        return (f"错误：邮件发送失败({type(e).__name__})：{str(e)[:200]}。"
+                f"请检查 .env 的 SMTP_HOST/PORT/USER/AUTH_CODE、授权码是否有效、"
+                f"收件人地址是否正确。也可以放弃发送，直接在回答中输出报告内容由用户自行转发。")
 
 
 SEND_TOOL = [{
     "type": "function",
     "function": {
         "name": "send_report",
-        "description": "把最终研究报告发送到指定邮箱。【危险操作】仅在用户明确要求发送时使用。",
+        "description": "把最终研究报告发送到指定邮箱（真实发送）。【危险操作】仅在用户明确要求发送时使用；"
+                       "调用前务必先完成调研（content 缺省时自动附带本次调研笔记全文）。",
         "parameters": {
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "收件人邮箱"},
                 "subject": {"type": "string", "description": "邮件主题"},
+                "content": {"type": "string", "description": "邮件正文（可选；缺省自动附带本次调研笔记全文）"},
             },
             "required": ["recipient", "subject"],
         },

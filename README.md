@@ -29,6 +29,80 @@
 - 📊 **评测与可观测**：12 题 LLM-as-judge 基线、四维评分、失败归类、观测面板、层级编号执行流（含 Plan 大纲卡片、动态 Checklist 任务看板、缓存命中徽章与萃取提纯徽章）
 - 🔌 **MCP 客户端**：一行配置接入外部 MCP server 工具生态（写类工具自动纳入人工确认）
 
+## 🗺️ 全流程图：规划 → 主循环 → 收尾（Harness 框架全景）
+
+对应内核 `common/agent_core.py` 的 `run()`。节点编号与工作台执行流事件一一对应（0.1 记忆 / 0.2 预算 / 0.3 规划 …），每个节点在 Web 端都可展开看完整输入输出。
+
+```mermaid
+flowchart TD
+    subgraph S0["🏗️ 第 0 步 · 启动准备"]
+        IN["用户提问<br/>（Web 工作台 / CLI / 评测）"] --> MEM["0.1 记忆注入<br/>memory.json 按相关性门禁过滤"]
+        MEM --> CTX["多轮会话上下文注入<br/>（session 摘要 + 历史笔记）"]
+        CTX --> BUD["0.2 预算护栏初始化<br/>2万 / 5万 / 12万 / 不限 · 步数上限 20 · 危险工具清单"]
+        BUD --> MCP["MCP 外部工具接入（可选）"]
+        MCP --> PLAN["0.3 规划：独立 LLM 调用（JSON mode）<br/>拆解不超过 3 个子问题 + 查证要点"]
+        PLAN --> CL["大纲 → 动态看板 checklist<br/>（每子问题：待查证 / 查证中 / 已完成）"]
+        CL --> SYS["大纲以【研究大纲】写入 system prompt<br/>看板文本每轮重复注入（对抗 context rot）"]
+    end
+
+    SYS --> P
+
+    subgraph LP["🔄 主循环 · 第 1~20 步（一圈一结清）"]
+        P["注入进度行 + 看板状态<br/>（全量核销 → 强收尾提示 / step≥4 → 进展自检）"] --> S1{"用户点了 ⏹？"}
+        S1 -->|"是：注入收尾指令（user_stop）"| WRAP["继续循环，模型停止点菜"]
+        S1 -->|否| S2{"倒数第 2 步<br/>或预算过 80%？"}
+        S2 -->|是| INJ["注入死线 / 软提醒（各一次）"]
+        S2 -->|否| CALL
+        INJ --> CALL["🧠 call_llm（带 tools 说明书）<br/>留档：完整输入 / 全字段输出 / token 明细"]
+        CALL -->|协议异常| ERR["❌ error 出口"]
+        CALL --> NOCALL{"无 tool_calls<br/>且正文有效？"}
+        NOCALL -->|是| DONE(["✅ model_done：正文即报告"])
+        NOCALL -->|否| HARD{"预算 ≥95% 或耗尽？"}
+        HARD -->|是| FORCE["🛡️ 硬收尾：摘除未应答点菜<br/>拔掉工具箱，无 tools 强制结题<br/>（budget_hard_stop）"]
+        HARD -->|否| CT{"上下文超限？"}
+        CT -->|是| COMPACT["★ 压缩：旧消息 LLM 摘要<br/>保留 目标 / 发现 / 待办 / 约束"]
+        CT -->|否| EXEC
+        COMPACT --> EXEC["🔧 逐个执行工具<br/>缓存查重 → 搜索 / 静态抓取 → JS 渲染降级 → 长文萃取"]
+        EXEC --> DANGER{"危险工具？"}
+        DANGER -->|是| HITL["⚠️ HITL 人工确认<br/>批准 / 拒绝均以回执喂回模型"]
+        DANGER -->|否| BACKFILL
+        HITL --> BACKFILL["回填 role:tool 消息<br/>tool_call_id 配对，一圈一结清<br/>note_write → 自动核销看板 · 检索 → 收集 evidence"]
+        BACKFILL --> BRK{"连续失败 ≥4 次？"}
+        BRK -->|"是（最多 2 次）"| BREAK["🚨 注入熔断指令"]
+        BRK -->|否| NEXT["下一轮 ⟲"]
+        BREAK --> NEXT
+    end
+
+    WRAP --> P
+    NEXT --> P
+    DONE --> ENDS
+    FORCE --> ENDS
+    ERR --> ENDS
+
+    subgraph FIN["🏁 收尾 · 出口与兜底链"]
+        ENDS["停止原因汇合<br/>model_done / budget_hard_stop / user_stop / max_steps / error"] --> FB{"仍无有效报告？"}
+        FB -->|是| FORCE2["无 tools 强制结题调用"]
+        FB -->|否| MEMO
+        FORCE2 --> STILL{"仍无效？"}
+        STILL -->|是| NOTES["📖 笔记原文兜底成报告"]
+        STILL -->|否| MEMO
+        NOTES --> MEMO["💾 记忆提取（LLM）+ 语义合并<br/>会话上下文保存 · RunLog 落盘"]
+        MEMO --> OUT["🏁 final 事件：报告全文<br/>Web 渲染 MD / CLI 打印"]
+    end
+```
+
+**Harness = 依赖注入**：内核只有一份（`common/agent_core.py`），五种 IO 全部由宿主注入——同一内核跑在两种宿主上：
+
+| 注入点 | CLI 宿主 | Web 工作台宿主 |
+|---|---|---|
+| `emit`（事件流） | 终端打印 | SSE 队列 + 事件落盘（历史可回放） |
+| `approver`（危险操作确认） | 终端 y/n | 网页「批准 / 拒绝」按钮 |
+| `stop_check`（中止） | — | ⏹ 中止按钮 |
+| `budget_max`（预算档位） | 环境变量 | 前端四档选择 |
+| `session`（多轮会话） | 可选 | SessionStore 自动管理 |
+
+> 设计要点：收敛（全量核销强收尾、预算硬收尾）、熔断、死线注入全部是**代码态物理约束**，不依赖提示词自觉——"物理约束 > 行为请求"贯穿全图。
+
 ## 快速开始
 
 ### 环境要求

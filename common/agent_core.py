@@ -28,6 +28,7 @@ from common.memory import MemoryStore, extract_preferences
 from common.guardrails import (Budget, approval_required, ask_human,
                                WRAP_UP_MSG, DANGEROUS_TOOLS)
 from common.observability import log_run
+from common.session import Session
 
 
 def _cli_emit(type: str, **p):
@@ -213,7 +214,7 @@ class ResearchAgent:
 
     def __init__(self, emit=None, approver=None, stop_check=None,
                  budget_max=_DEFAULT, use_mcp=False, impl="agent_core",
-                 run_id=None):
+                 run_id=None, session=None):
         self.emit = emit or _cli_emit
         self.approver = approver or _cli_approver
         self.stop_check = stop_check or (lambda: False)
@@ -227,6 +228,7 @@ class ResearchAgent:
         self.stop_reason = "model_done"
         self._wrap_injected = False
         self.run_id = run_id   # 外部传入则沿用（Web 工作台），否则自生成
+        self.session = session   # Session 对象（多轮研究会话）
         self.checklist = []
         self._step_cur = 0
         self._sub = 0
@@ -291,6 +293,21 @@ class ResearchAgent:
                 summary = first_line[:50] or "已记录相关调研笔记"
                 self.update_checklist_item(item["id"], "completed", summary)
 
+    def _session_context(self) -> str:
+        """多轮对话上下文：注入 session 的历史发现和对话轮次，让模型知道之前研究了什么。"""
+        if not self.session:
+            return ""
+        ctx = self.session.load_context()
+        notes = self.session.read_notes()
+        bits = []
+        if ctx and ctx.get("summary"):
+            bits.append(f"【此前研究摘要】\n{ctx['summary']}")
+        if notes.strip():
+            bits.append(f"【已有研究笔记】\n{notes[:2000]}")
+        if not bits:
+            return ""
+        return "\n【会话上下文——此前运行的成果，可引用或继续深入】\n" + "\n".join(bits) + "\n"
+
     def run(self, question: str) -> dict:
         client = make_client()
         self._step_cur, self._sub = 0, 0   # 0 号段 = 启动准备（记忆/护栏/MCP）
@@ -326,11 +343,16 @@ class ResearchAgent:
             "优先采信一手官方发布；若关键分歧无法简单消除，必须在报告中明确指出'存在信源分歧'，"
             "分别列出各自信源论据及引用链接编号，严禁擅自猜测抹平或平均化折中。\n"
             + (prefs_text + "\n" if prefs_text else "")
+            + (self._session_context() if self.session else "")
         )
 
         # 工具与缓存装配（使用局部字典与独立会话缓存，杜绝全局竞态与重复探索）
-        tools_mod.set_notes_file(ROOT / "notes" / "agent_memory" /
-                                 f"run_{int(time.time())}.md")
+        # ★ 笔记续跑：同 session 共用一个笔记文件（跨运行持久化）
+        if self.session:
+            notes_p = self.session.notes_path
+        else:
+            notes_p = ROOT / "notes" / "agent_memory" / f"run_{int(time.time())}.md"
+        tools_mod.set_notes_file(notes_p)
         from common.cache import SessionToolCache
         self.cache = SessionToolCache()
         self.tools_registry = dict(tools_mod.REAL_REGISTRY)
@@ -685,6 +707,24 @@ class ResearchAgent:
         added = memory.merge(new_prefs, client=client)
         self.emit("memory_saved", added=added,
                   facts=[f["text"] for f in memory.data["facts"]])
+
+        # 多轮对话：保存上下文快照（摘要/发现/待办）供下次运行注入
+        if self.session:
+            key_findings = []
+            pending = []
+            for m in messages:
+                d = m if isinstance(m, dict) else m.model_dump()
+                if d.get("role") == "assistant" and d.get("tool_calls"):
+                    for tc in d["tool_calls"]:
+                        if tc["function"]["name"] == "note_write":
+                            try:
+                                key_findings.append(json.loads(tc["function"]["arguments"]).get("content", "")[:200])
+                            except Exception:
+                                pass
+            self.session.save_context(
+                summary=f"已完成 {step} 步研究，提取到 {len(self.session.read_notes())} 字符笔记",
+                key_findings=key_findings[-5:], pending=pending)
+            self.session.add_run(rec["run_id"], question[:80])
 
         rec = log_run(run_id=self.run_id, impl=self.impl,
                       question=question[:80], steps=step,

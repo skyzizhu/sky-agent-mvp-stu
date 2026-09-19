@@ -193,24 +193,9 @@ def start_research(body: ResearchIn):
     agent._push("run_meta", run_id=run_id, session_id=session.id,
                 question=body.question)
     # ★运行线程 = Agent 调研 + 定稿后统一投递（投递在宿主层，不进内核）
+    # 是否发送、发什么：模型在循环中经 request_send 自主判断登记（agent.pending_delivery）
     def _target():
         try:
-            # ★纯发送路由：会话里已有报告、本轮只要求发送 → 完全跳过研究循环
-            #   （不规划、不检索、不重写报告），直接取上一轮定稿进入投递
-            if report_delivery.is_pure_send_request(body.question):
-                prev = _last_session_report(session, exclude_run=run_id)
-                if not prev:
-                    agent.emit("note", text="当前会话还没有已生成的报告可发送，"
-                                            "请先完成一次调研（提问时再带上邮箱即可）。")
-                    return
-                agent.emit("note", text="检测到纯发送请求：跳过调研，"
-                                        "直接使用本会话上一轮的报告定稿。")
-                report_delivery.post_run_delivery(
-                    agent.emit, body.question, prev, notes_text="",
-                    wait_decision=agent.wait_send_decision,
-                    verbatim=not report_delivery.has_content_spec(body.question))
-                return
-
             result = agent.run(body.question)
             agent.run_result = result
             notes_text = ""
@@ -222,7 +207,9 @@ def start_research(body: ResearchIn):
                 pass
             report_delivery.post_run_delivery(
                 agent.emit, body.question, result.get("answer", ""),
-                notes_text=notes_text, wait_decision=agent.wait_send_decision)
+                notes_text=notes_text, wait_decision=agent.wait_send_decision,
+                pending=getattr(agent, "pending_delivery", None),
+                prior_report=_last_session_report(session, exclude_run=run_id) or "")
         except Exception as e:
             agent.emit("error", message=str(e)[:200])
 

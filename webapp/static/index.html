@@ -186,12 +186,26 @@
         <ul class="pinned-list" id="pinned_list"></ul>
       </div>
       <div id="timeline"><div class="placeholder">等待运行…</div></div>
+
+      <!-- HITL 审批横幅 -->
+      <div id="approval" class="approval" style="display:none">
+        <div class="ev approval">
+          <b>⚠️ 需要人工确认</b> —— <span id="approval_text"></span>
+          <div class="btns">
+            <button class="yes" onclick="respond(true)">✅ 批准执行</button>
+            <button class="no" onclick="respond(false)">❌ 拒绝</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 报告面板（有报告时显示） -->
     <div class="panel" style="display:none" id="report_panel">
       <h2 style="display:flex;align-items:center;justify-content:space-between;">
-        <span>最终报告</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span>最终报告</span>
+          <span id="report_meta" style="font-size:11.5px;color:var(--dim);font-weight:normal;"></span>
+        </span>
         <span style="display:flex;gap:8px;">
           <button class="rbtn" id="zenbtn" onclick="toggleZenMode()">⛶ 全屏阅读</button>
           <button class="rbtn" id="copybtn" onclick="copyMd()" disabled>📋 复制 MD</button>

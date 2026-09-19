@@ -132,14 +132,19 @@ SEND_TOOL = [{
     "type": "function",
     "function": {
         "name": "send_report",
-        "description": "把最终研究报告发送到指定邮箱（真实发送）。【危险操作】仅在用户明确要求发送时使用；"
-                       "调用前务必先完成调研（content 缺省时自动附带本次调研笔记全文）。",
+        "description": "把研究内容发送到指定邮箱（真实发送）。【危险操作】仅在用户明确要求发送时使用，"
+                       "按用户想要的内容选 content_mode：用户要'当前/阶段性/某个节点的内容'用 notes；"
+                       "用户要'最终报告'用 final（调用后请立即继续完成报告，定稿时系统会请求用户确认并自动发送全文）。",
         "parameters": {
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "收件人邮箱"},
                 "subject": {"type": "string", "description": "邮件主题"},
-                "content": {"type": "string", "description": "邮件正文（可选；缺省自动附带本次调研笔记全文）"},
+                "content_mode": {"type": "string", "enum": ["notes", "custom", "final"],
+                                 "description": "发送内容：notes=当前调研笔记快照（即时发送）；"
+                                                "custom=自定义正文（配合 content 参数，即时发送）；"
+                                                "final=最终报告定稿（登记后定稿时自动请求确认并发送全文）"},
+                "content": {"type": "string", "description": "邮件正文（仅 content_mode=custom 时使用）"},
             },
             "required": ["recipient", "subject"],
         },
@@ -270,6 +275,7 @@ class ResearchAgent:
         self.run_id = run_id   # 外部传入则沿用（Web 工作台），否则自生成
         self.session = session   # Session 对象（多轮研究会话）
         self.checklist = []
+        self.pending_send = None   # content_mode="final" 的定稿发送登记 {recipient, subject}
         self._step_cur = 0
         self._sub = 0
 
@@ -333,6 +339,21 @@ class ResearchAgent:
                 summary = first_line[:50] or "已记录相关调研笔记"
                 self.update_checklist_item(item["id"], "completed", summary)
 
+    def _send_report_tool(self, recipient: str, subject: str,
+                          content: str = "", content_mode: str = "notes") -> str:
+        """send_report 动态分发（按用户意图选内容，见 realize.md 3.7）：
+        notes/custom → 即时发送（笔记快照 / 自定义正文）；
+        final → 只登记 pending_send 不发送，报告定稿后由收尾钩子
+                带真实内容预览请求审批，批准才发送定稿全文。"""
+        if content_mode == "final":
+            self.pending_send = {"recipient": recipient, "subject": subject}
+            return json.dumps({"status": "scheduled",
+                               "note": "已登记定稿发送：完成最终报告后系统会请求用户确认"
+                                       "并自动发送报告全文。请立即继续完成最终报告，"
+                                       "不要再次调用 send_report。"},
+                              ensure_ascii=False)
+        return send_report(recipient, subject, content)
+
     def _session_context(self) -> str:
         """多轮对话上下文：注入 session 的历史发现和对话轮次，让模型知道之前研究了什么。"""
         if not self.session:
@@ -369,7 +390,11 @@ class ResearchAgent:
             "3. 引用格式（硬性）：报告中每个事实性陈述后必须紧跟 [n](完整URL) 形式的引用编号，"
             "并在报告末尾用'## 参考'小节逐条列出 [n] 完整链接——"
             "严禁只写域名文字代替编号引用；\n"
-            "4. send_report 是危险操作，仅当用户明确要求发送时才使用；\n"
+            "4. send_report 是危险操作，仅当用户明确要求发送时才使用；"
+            "按用户想要的内容选 content_mode：要'当前/阶段性/中间内容'用 notes（调研中即时发送）；"
+            "要'最终报告'用 final——**必须在第一轮就调用 send_report(content_mode='final') 完成登记"
+            "（登记本身不发邮件、零成本），然后专心调研并输出报告**；"
+            "登记后不要重复调用，报告定稿时系统会请求用户确认并自动发送全文；\n"
             "5. 充分度收敛门禁（硬性）：深度研究不等于无休止穷举！对照【用户问题】，"
             "只要核心主干要点（产品定位、核心工作流/链路、交互入口、权限与安全边界）"
             "已有事实和来源支撑（以笔记为准），即判定为信息充分！"
@@ -396,7 +421,7 @@ class ResearchAgent:
         from common.cache import SessionToolCache
         self.cache = SessionToolCache()
         self.tools_registry = dict(tools_mod.REAL_REGISTRY)
-        self.tools_registry["send_report"] = send_report
+        self.tools_registry["send_report"] = self._send_report_tool   # 实例级：支持 final 延迟发送
         self.tools_registry["update_checklist"] = self.update_checklist_item
         all_tools = tools_mod.REAL_TOOLS + SEND_TOOL
 
@@ -614,7 +639,11 @@ class ResearchAgent:
                 tool_sequence.append(tc.function.name)
                 args = json.loads(tc.function.arguments)
 
-                if approval_required(tc.function.name):  # HITL
+                # ★content_mode="final" 的发送不在调用时审批——登记后移到
+                #   报告定稿的收尾钩子里带真实内容预览请求审批（notes/custom 仍即时审批）
+                _deferred = (tc.function.name == "send_report"
+                             and args.get("content_mode") == "final")
+                if approval_required(tc.function.name) and not _deferred:  # HITL
                     self._sub += 1
                     self._approval_sub = f"{step}.{self._sub}"
                     self.emit("approval_request", sub=self._approval_sub,
@@ -746,6 +775,31 @@ class ResearchAgent:
             final = final or "（预算耗尽且结题失败，未获取到有效结论）"
         else:
             final = _clean_report(final)
+
+        # ★定稿发送钩子：content_mode="final" 的登记在此兑现——
+        #   报告已定稿，带真实内容预览请求人工审批，批准才发送定稿全文
+        #   （物理时序保证：先有报告、后发送；邮件 = 屏幕上同一份定稿）
+        if getattr(self, "pending_send", None):
+            ps, self.pending_send = self.pending_send, None
+            self._sub += 1
+            self._approval_sub = f"{step}.{self._sub}"
+            self.emit("approval_request", sub=self._approval_sub,
+                      tool="send_report(final)",
+                      args=json.dumps({**ps, "content_preview": (final or "")[:300]},
+                                      ensure_ascii=False),
+                      reason="对外发送最终报告定稿全文，发出后无法撤回")
+            approved, receipt = self.approver("send_report(final)",
+                                              json.dumps(ps, ensure_ascii=False))
+            self.emit("approval_result", sub=self._approval_sub,
+                      tool="send_report(final)", approved=approved, receipt=receipt)
+            if approved:
+                r = send_report(ps["recipient"], ps["subject"], content=final or "")
+            else:
+                r = json.dumps({"status": "cancelled",
+                                "note": "用户拒绝发送，报告仅在界面展示"},
+                               ensure_ascii=False)
+            self._emit_sub("tool_result", name="send_report(final)",
+                           result=r[:200], full_result=r, args=ps, tool_ms=0)
 
 
         # 会话结束：记忆提取 + 运行日志

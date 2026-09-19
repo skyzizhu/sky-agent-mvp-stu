@@ -20,8 +20,10 @@ sys.path.insert(0, str(ROOT))
 import config
 from common.agent_core import ResearchAgent
 
-EV_DIR = ROOT / "logs" / "events"          # 每次运行的事件存档（可回放）
+EV_DIR = ROOT / "logs" / "events"
+SESSION_DIR = ROOT / "sessions"          # 每次运行的事件存档（可回放）
 from common.guardrails import DANGEROUS_TOOLS
+from common.session import SessionStore
 from common.observability import load_runs
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
@@ -32,7 +34,9 @@ app = FastAPI(title="Agent Research Workbench")
 
 # 运行注册表：run_id -> {"agent", "thread", "question"}
 RUNS = {}
+SESSION_STORE = SessionStore(SESSION_DIR)
 EV_DIR.mkdir(parents=True, exist_ok=True)
+SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ResearchAgentWeb(ResearchAgent):
@@ -121,7 +125,8 @@ def get_config():
 
 class ResearchIn(BaseModel):
     question: str
-    tier: str = "standard"   # quick / standard / deep
+    tier: str = "standard"
+    session_id: str = ""      # 空 = 新会话
 
 
 @app.post("/api/research")
@@ -130,15 +135,18 @@ def start_research(body: ResearchIn):
     budget_max = (3000 if os.getenv("LOW_BUDGET")
                   else config.BUDGET_TIERS.get(body.tier,
                        config.BUDGET_TIERS["standard"]))   # unlimited 档在配置里为 None
+    session = SESSION_STORE.get_or_create(body.session_id) if body.session_id else SESSION_STORE.create()
+    session.add_run(run_id, body.question[:80])
     agent = ResearchAgentWeb(run_id, impl="webapp",
                              use_mcp=os.getenv("MCP_FS") == "1",
-                             budget_max=budget_max,
+                             budget_max=budget_max, run_id=run_id,
+                             session=session,
                              events_path=EV_DIR / f"events_{run_id}.jsonl")
     t = threading.Thread(target=agent.run, args=(body.question,), daemon=True)
     RUNS[run_id] = {"agent": agent, "thread": t, "question": body.question}
     agent._thread = t  # SSE 生成器通过它判断运行是否结束
     t.start()
-    return {"run_id": run_id}
+    return {"run_id": run_id, "session_id": session.id}
 
 
 @app.get("/api/research/{run_id}/events")

@@ -244,7 +244,7 @@
           <button class="tier" data-t="unlimited">🚀 不限</button>
         </div>
       </div>
-      <div class="hint">含"发送到邮箱"的问题：报告完成后会弹出发送确认卡（附正文预览），确认后才真正发送。</div>
+      <div class="hint">深链调研任务示例：点上方场景词填入，或直接描述你的研究问题。</div>
     </div>
   </div>
 </main>
@@ -607,31 +607,6 @@ function renderEvent(ev, live){
     case 'note':
       addStandalone('note', `ℹ️ ${esc(ev.text || ev.note || '')}`);
       break;
-    case 'send_request': {
-      // 邮件发送确认卡（报告定稿后统一弹出）：实时模式带按钮，回放只读
-      const btns = live ?
-        `<div style="margin-top:7px;display:flex;gap:8px;">
-           <button class="yes" onclick="sendDecision(true)">✉️ 确认发送</button>
-           <button class="no" onclick="sendDecision(false)">取消</button>
-         </div>` : '';
-      const card = addStandalone('approval',
-        `✉️ 邮件发送确认 → <b>${esc(ev.recipient)}</b>`,
-        `<b>主题</b>：${esc(ev.subject || '')}<br>` +
-        `<b>正文（${ev.body_chars ?? '?'} 字）预览</b>：<pre>${esc((ev.preview || '').slice(0, 800))}${(ev.body_chars || 0) > 800 ? '\n…（预览截断）' : ''}</pre>` + btns);
-      if (live && card) card.id = 'send_card';
-      break;
-    }
-    case 'send_result':
-      if (ev.status === 'sent')
-        addStandalone('final', `✉️ 邮件已发送 → <b>${esc(ev.recipient)}</b>（${ev.content_chars ?? '?'} 字）`);
-      else if (ev.status === 'sent(mock)')
-        addStandalone('note', `✉️ 模拟发送（未配置 SMTP）→ ${esc(ev.recipient || '')}，共 ${ev.content_chars ?? '?'} 字`);
-      else if (ev.status === 'cancelled')
-        addStandalone('note', `✉️ 发送已取消：报告仅在界面展示${ev.note ? '（' + esc(ev.note) + '）' : ''}`);
-      else if (ev.status === 'error')
-        addStandalone('approval', `❌ 邮件发送失败：${esc(ev.error || '')}`);
-      break;
-
     case 'done':
       doneSeen = true;
       if (live) { es.close(); $('start').disabled = false; $('stopbtn').disabled = true;
@@ -855,13 +830,6 @@ async function loadRun(id){
 async function stopRun(){
   if (!runId) return;
   await fetch(`/api/research/${runId}/stop`, {method:'POST'});
-}
-// 邮件发送确认卡的决定回填（卡片置灰防重复点击）
-function sendDecision(approved){
-  const card = $('send_card');
-  if (card) { card.style.opacity = .55; card.querySelectorAll('button').forEach(b => b.disabled = true); }
-  fetch(`/api/research/${runId}/send_decision`, {method:'POST',
-    headers:{'Content-Type':'application/json'}, body: JSON.stringify({approved})});
 }
 async function respond(approved){
   await fetch(`/api/research/${runId}/approve`, {method:'POST',

@@ -88,30 +88,6 @@ CIRCUIT_BREAKER_MSG = ("⚠️ 工具已连续失败多次。禁止再用相同�
                        "立即基于【已有信息】输出阶段性结论（如实标注未获取到的部分），"
                        "不要浪费剩余预算继续尝试。")
 
-# ★投递意图登记工具：模型表达"用户要求发送"的判断（零副作用——只登记，
-#   不发送不阻塞不需审批）；真正的发送在报告定稿后由 services/report_delivery
-#   执行（带真实内容预览的人工确认）。判断权在模型，执行权在代码。
-REQUEST_SEND_TOOL = [{
-    "type": "function",
-    "function": {
-        "name": "request_send",
-        "description": "登记投递意图：用户要求把任何内容发送到邮箱时调用。只登记、不发送"
-                       "（零成本、不阻塞）——报告定稿后系统会向用户展示内容预览并请求确认，"
-                       "确认后才由投递服务真实发送。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "recipient": {"type": "string", "description": "收件人邮箱（从用户输入中原样提取）"},
-                "content_hint": {"type": "string",
-                                 "description": "用户想要发送的内容（自由文本，跟随用户措辞）："
-                                                "如'最终报告全文'、'第一步查到的内容'、'只发结论'、'摘要'"},
-                "subject": {"type": "string", "description": "邮件主题（可选，缺省自动生成）"},
-            },
-            "required": ["recipient", "content_hint"],
-        },
-    },
-}]
-
 def _build_forced_final_msg() -> str:
     """构建强制结题指令：由代码主动从磁盘提取调研笔记全文嵌入 Prompt，
     消除模型因'收尾前必须 note_read'而尝试输出裸 DSML 工具调用的动机。"""
@@ -231,7 +207,6 @@ class ResearchAgent:
         self.run_id = run_id   # 外部传入则沿用（Web 工作台），否则自生成
         self.session = session   # Session 对象（多轮研究会话）
         self.checklist = []
-        self.pending_delivery = None   # request_send 登记的投递意图 {recipient, content_hint, subject}
         self._step_cur = 0
         self._sub = 0
 
@@ -295,18 +270,6 @@ class ResearchAgent:
                 summary = first_line[:50] or "已记录相关调研笔记"
                 self.update_checklist_item(item["id"], "completed", summary)
 
-    def _request_send_tool(self, recipient: str, content_hint: str,
-                           subject: str = "") -> str:
-        """request_send 的执行体：模型判断"用户要求投递"后的登记入口。
-        零副作用——只记录意图；发送由 services/report_delivery 在定稿后执行。"""
-        self.pending_delivery = {"recipient": (recipient or "").strip(),
-                                 "content_hint": (content_hint or "").strip(),
-                                 "subject": (subject or "").strip()}
-        return json.dumps({"status": "scheduled",
-                           "note": "已登记投递意图。请继续完成任务；报告定稿后系统会"
-                                   "向用户展示预览并请求确认后发送。"},
-                          ensure_ascii=False)
-
     def _session_context(self) -> str:
         """多轮对话上下文：注入 session 的历史发现和对话轮次，让模型知道之前研究了什么。"""
         if not self.session:
@@ -343,21 +306,16 @@ class ResearchAgent:
             "3. 引用格式（硬性）：报告中每个事实性陈述后必须紧跟 [n](完整URL) 形式的引用编号，"
             "并在报告末尾用'## 参考'小节逐条列出 [n] 完整链接——"
             "严禁只写域名文字代替编号引用；\n"
-            "4. 投递登记：用户要求把任何内容发送到邮箱时，尽早调用 request_send 登记"
-            "（它只登记不发信，零成本）；content_hint 写明用户想要的内容"
-            "（如'最终报告全文'/'第一步查到的内容'/'只发结论'，跟随用户原话）；"
-            "登记后继续正常任务——纯发送请求无需检索，直接作答即可；"
-            "用户没要求发送时严禁调用；\n"
-            "5. 充分度收敛门禁（硬性）：深度研究不等于无休止穷举！对照【用户问题】，"
+            "4. 充分度收敛门禁（硬性）：深度研究不等于无休止穷举！对照【用户问题】，"
             "只要核心主干要点（产品定位、核心工作流/链路、交互入口、权限与安全边界）"
             "已有事实和来源支撑（以笔记为准），即判定为信息充分！"
             "严禁继续发散检索无关的边缘配置、分值折算、详细价目表等次要细节。"
             "一旦主干充分，立即调用 note_read 并输出报告，坚决杜绝为了'追求极致完备'而原地漫游；\n"
-            "6. 数字纪律（硬性）：所有数字（价格/限额/日期/规格）必须逐字来自工具返回的原文；"
+            "5. 数字纪律（硬性）：所有数字（价格/限额/日期/规格）必须逐字来自工具返回的原文；"
             "证据中没有的数字一律标注'未验证'，严禁凭记忆、推算或换算补全；\n"
-            "7. 摘要优先原则（Snippet-First）：搜索结果返回的 snippet 经常已包含确切日期、版本号、产品定义或核心结论。"
+            "6. 摘要优先原则（Snippet-First）：搜索结果返回的 snippet 经常已包含确切日期、版本号、产品定义或核心结论。"
             "若搜索摘要已能证实某事实，可直接调用 note_write 沉淀并带上对应 url 引用，无需盲目打开每一个网页；仅当摘要缺少关键细节时才调用 fetch_url；\n"
-            "8. 信源分歧处理（交叉验证）：当不同信源（如官方文档 vs 第三方自媒体/社区讨论）的数据或结论相冲突时，"
+            "7. 信源分歧处理（交叉验证）：当不同信源（如官方文档 vs 第三方自媒体/社区讨论）的数据或结论相冲突时，"
             "优先采信一手官方发布；若关键分歧无法简单消除，必须在报告中明确指出'存在信源分歧'，"
             "分别列出各自信源论据及引用链接编号，严禁擅自猜测抹平或平均化折中。\n"
             + (prefs_text + "\n" if prefs_text else "")
@@ -374,9 +332,8 @@ class ResearchAgent:
         from common.cache import SessionToolCache
         self.cache = SessionToolCache()
         self.tools_registry = dict(tools_mod.REAL_REGISTRY)
-        self.tools_registry["request_send"] = self._request_send_tool
         self.tools_registry["update_checklist"] = self.update_checklist_item
-        all_tools = list(tools_mod.REAL_TOOLS) + REQUEST_SEND_TOOL
+        all_tools = list(tools_mod.REAL_TOOLS)
 
         self.mcp_clients = []
         if self.use_mcp:

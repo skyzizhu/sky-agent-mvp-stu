@@ -35,14 +35,6 @@ DEFAULT_BUDGET_TIER = "standard"
 # 未配置则降级为免费 ddgs（DuckDuckGo，限流/超时较多）
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
-# Stage 11+：邮件发送配置（send_report 危险工具）。
-# HOST/USER/AUTH_CODE 三项全配齐才启用真实发送；缺任何一项自动降级为模拟发送
-# （返回 sent(mock)，不报错）——MVP 演示与生产行为同一份代码。
-SMTP_HOST = os.getenv("SMTP_HOST", "")            # 如 smtp.163.com
-SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))    # SSL 端口：163/126/yeah.net 均为 465
-SMTP_USER = os.getenv("SMTP_USER", "")            # 完整邮箱地址（同时作为发件人）
-SMTP_AUTH_CODE = os.getenv("SMTP_AUTH_CODE", "")  # 授权码（不是邮箱登录密码！）
-
 # Stage 10/11：MCP 服务器配置
 # 优先级：.env 的 MCP_SERVERS（JSON数组）> 旧开关 MCP_FS=1（默认filesystem）> 不启用
 # 每项格式：{"name": "前缀名", "command": "启动命令", "args": [...]}

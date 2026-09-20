@@ -411,6 +411,28 @@ agent-mvp-stu/
 - **学**：workflow 五大模式（prompt chaining / routing / parallelization / orchestrator-workers / evaluator-optimizer）中的前两类终于亲手用上；什么时候该用确定性流程、什么时候放权给模型——**这是 PM 做产品决策时最需要的判断力**。
 - **阅读**：《Building Effective Agents》的 Workflow Patterns 一节（精读）。
 - **验收**：能对任意新需求说清楚"这个该用 workflow 还是 agent，为什么"。
+- **✅ 已实现升级**：反思模式的修订者已配上检索工具——评审指出事实层缺口时先定向补查再改写。流程与架构见下方"反思模式"小节，代码在 `stages/06_patterns/patterns.py` 的 `run_reflective`。
+
+### 🔁 反思模式：评审（只核对）→ 修订（带工具补查）
+
+位置：`stages/06_patterns/patterns.py` 的 `run_reflective`（独立实验入口，`python stages/06_patterns/patterns.py` 直接体验；不在工作台主链路）。
+
+```
+run_workflow 产出 草稿 + 证据池
+        ↓
+┌─ 评审循环（最多 2 轮；pass=true 提前退出）────────────────┐
+│ ① 评审员（只核对，不检索）：问题/证据/草稿 三方比对          │
+│     → JSON {pass, issues[]}，意见必须具体可修               │
+│ ② 修订策划：逐条判断哪些意见需要"新外部证据"才能修            │
+│     → 生成定向搜索词（每轮最多 2 次）                        │
+│ ③ 补查执行：真实 web_search，结果并入证据池（下轮评审可见）    │
+│ ④ 修订者：拿意见 + 新证据改写，新事实加 [n](url) 引用         │
+└────────────────────────────────────────────────────┘
+        ↓ pass
+最终报告
+```
+
+设计要点：**判断权在模型**（哪些意见需要补查、查什么），**执行权在代码**（补查次数上限、统一走 web_search、证据池合并）。实测：第 1 轮评审抓到"64K/128K 信源矛盾未解释"→ 2 条定向补查 → 第 2 轮通过。教训：批评只有能被行动解决时才有价值，否则只是被措辞糊弄。
 
 ### Stage 7：Orchestrator-Workers 多智能体（3 天）
 

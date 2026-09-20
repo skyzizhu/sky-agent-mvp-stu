@@ -114,15 +114,31 @@ flowchart TD
 - 任一支持 Tool Calling 的模型 API（本项目用 DeepSeek，OpenAI/GLM/Qwen 等兼容协议均可）
 - 可选：Node.js（MCP server 需要）、[Tavily](https://tavily.com) API key（搜索质量更好，免费额度够用）
 
-### 安装
+### 方式一：一键启动（推荐）
 
 ```bash
 git clone https://github.com/skyzizhu/sky-agent-mvp-stu.git
 cd sky-agent-mvp-stu
-python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+cp .env.example .env        # 编辑 .env，填入 LLM_API_KEY（必填）等配置
+./start.sh                  # 自动建环境/装依赖/启动/打开浏览器
+./stop.sh                   # 不用了就停止
+```
+
+`start.sh` 会自动完成：创建 `.venv` 虚拟环境 → 安装依赖（首次 1-2 分钟）→ 检查 `.env` 配置 → 后台启动服务并健康检查 → 打开浏览器。重复执行也安全（已在运行就直接打开页面）。
+
+### 方式二：手动安装（想了解每一步，或一键脚本在你的机器上不顺）
+
+```bash
+git clone https://github.com/skyzizhu/sky-agent-mvp-stu.git
+cd sky-agent-mvp-stu
+python3 -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-playwright install chromium                          # fetch_js 工具需要（约 150MB）
+playwright install chromium                          # 可选：fetch_js 工具需要（约 150MB）
 cp .env.example .env                                 # 填入下表配置
+
+# 启动工作台
+python -m uvicorn webapp.app:app --host 127.0.0.1 --port 7870
+# 浏览器打开 http://127.0.0.1:7870
 ```
 
 ### 配置 .env
@@ -141,7 +157,7 @@ cp .env.example .env                                 # 填入下表配置
 ### 1️⃣ 研究工作台（推荐）
 
 ```bash
-python -m uvicorn webapp.app:app --port 7870
+./start.sh                  # 一键启动（详见"快速开始"）；停止: ./stop.sh
 # 浏览器打开 http://127.0.0.1:7870
 ```
 

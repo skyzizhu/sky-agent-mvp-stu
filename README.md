@@ -39,9 +39,9 @@ flowchart TD
     subgraph S0["🏗️ 第 0 步 · 启动准备"]
         IN["用户提问<br/>（Web 工作台 / CLI / 评测）"] --> MEM["0.1 记忆注入<br/>memory.json 按相关性门禁过滤"]
         MEM --> CTX["多轮会话上下文注入<br/>（session 摘要 + 历史笔记）"]
-        CTX --> BUD["0.2 预算护栏初始化<br/>2万 / 5万 / 12万 / 不限 · 步数上限 20 · 危险工具清单"]
-        BUD --> MCP["MCP 外部工具接入（可选）"]
-        MCP --> PLAN["0.3 规划：独立 LLM 调用（JSON mode）<br/>拆解不超过 3 个子问题 + 查证要点"]
+        CTX --> MCP["MCP 外部工具接入（可选）"]
+        MCP --> BUD["0.2 预算护栏初始化<br/>2万 / 5万 / 12万 / 不限 · 步数上限 20 · 危险工具清单"]
+        BUD --> PLAN["0.3 规划：独立 LLM 调用（JSON mode）<br/>拆解不超过 3 个子问题 + 查证要点"]
         PLAN --> CL["大纲 → 动态看板 checklist<br/>（每子问题：待查证 / 查证中 / 已完成）"]
         CL --> SYS["大纲以【研究大纲】写入 system prompt<br/>看板文本每轮重复注入（对抗 context rot）"]
     end

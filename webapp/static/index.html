@@ -119,6 +119,7 @@
   .pinned-stat { font-size:12px; color:var(--acc); font-weight:600; }
   .pinned-bar { height:6px; background:#e2ebf7; border-radius:99px; overflow:hidden; margin-bottom:8px; }
   .pinned-fill { height:100%; background:var(--acc); width:0%; transition:width .35s ease; }
+  .pinned-note { font-size:10.5px; color:var(--dim); margin:-4px 0 7px; line-height:1.5; }
   .pinned-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px; font-size:12px; }
   .pinned-list li { line-height:1.5; color:#2e384d; }
   .pinned-list .p-sum { font-size:11px; color:#137333; margin-left:22px; background:#eaf5ee;
@@ -192,6 +193,7 @@
           <span class="pinned-stat" id="pinned_stat">0 / 0 已核销 (0%)</span>
         </div>
         <div class="pinned-bar"><div class="pinned-fill" id="pinned_fill" style="width:0%"></div></div>
+        <div class="pinned-note">ℹ️ 架构说明：子问题没有独立的循环或子 agent——由主 agent 在下方同一循环内按看板串行核销（note_write 自动核销 / update_checklist 显式核销），全部完成后触发收尾。</div>
         <ul class="pinned-list" id="pinned_list"></ul>
       </div>
       <div id="timeline"><div class="placeholder">等待运行…</div></div>

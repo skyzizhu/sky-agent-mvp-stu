@@ -22,11 +22,8 @@ from common.agent_core import ResearchAgent
 
 EV_DIR = ROOT / "logs" / "events"
 SESSION_DIR = ROOT / "sessions"          # 每次运行的事件存档（可回放）
-from common.guardrails import DANGEROUS_TOOLS
 from common.session import SessionStore
 from common.observability import load_runs
-from common import tools as tools_mod
-from services import report_delivery
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -54,7 +51,6 @@ class ResearchAgentWeb(ResearchAgent):
         self._queue = []                      # 事件队列（SSE 消费）
         self._cond = threading.Condition()
         self._approval = None                 # {"event","approved","tool","args"}
-        self._send_decision = None            # 投递服务确认卡 {"event","approved"}
         self._thread = None                   # 由路由在启动线程后回填
 
     # -- emit 注入：推进队列 --
@@ -109,22 +105,6 @@ class ResearchAgentWeb(ResearchAgent):
             return True
         return False
 
-    # -- 投递确认：发送确认卡的决定回填（services/report_delivery 阻塞等待） --
-    def wait_send_decision(self, timeout: float) -> bool:
-        ev = threading.Event()
-        with self._cond:
-            self._send_decision = {"event": ev, "approved": None}
-        ev.wait(timeout)
-        return bool(self._send_decision and self._send_decision.get("approved"))
-
-    def resolve_send(self, approved: bool) -> bool:
-        d = self._send_decision
-        if d and not d["event"].is_set():
-            d["approved"] = approved
-            d["event"].set()
-            return True
-        return False
-
     def stop(self):
         self._stop.set()
 
@@ -150,31 +130,6 @@ class ResearchIn(BaseModel):
     session_id: str = ""      # 空 = 新会话
 
 
-def _last_session_report(session, exclude_run: str) -> str | None:
-    """取本会话最近一次有定稿报告的运行（事件存档里 final.answer）。
-    从最新往旧找，final 事件在文件尾部所以倒序扫描很快。"""
-    if not session:
-        return None
-    for rec in reversed(session.meta.get("runs", [])):
-        rid = rec.get("run_id", "")
-        if not rid or rid == exclude_run:
-            continue
-        p = EV_DIR / f"events_{rid}.jsonl"
-        if not p.exists():
-            continue
-        for line in reversed(p.read_text(encoding="utf-8").splitlines()):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if e.get("type") == "final" and (e.get("answer") or "").strip():
-                return e["answer"]
-    return None
-
-
 @app.post("/api/research")
 def start_research(body: ResearchIn):
     run_id = uuid.uuid4().hex[:8]
@@ -192,24 +147,10 @@ def start_research(body: ResearchIn):
     #   实现"一次会话多轮查询"的完整时间线还原
     agent._push("run_meta", run_id=run_id, session_id=session.id,
                 question=body.question)
-    # ★运行线程 = Agent 调研 + 定稿后统一投递（投递在宿主层，不进内核）
-    # 是否发送、发什么：模型在循环中经 request_send 自主判断登记（agent.pending_delivery）
     def _target():
         try:
             result = agent.run(body.question)
             agent.run_result = result
-            notes_text = ""
-            try:
-                notes_p = tools_mod._current_notes_file()   # 线程局部：与本轮一致
-                if notes_p and Path(notes_p).exists():
-                    notes_text = Path(notes_p).read_text(encoding="utf-8")
-            except Exception:
-                pass
-            report_delivery.post_run_delivery(
-                agent.emit, body.question, result.get("answer", ""),
-                notes_text=notes_text, wait_decision=agent.wait_send_decision,
-                pending=getattr(agent, "pending_delivery", None),
-                prior_report=_last_session_report(session, exclude_run=run_id) or "")
         except Exception as e:
             agent.emit("error", message=str(e)[:200])
 
@@ -270,19 +211,6 @@ def stop(run_id: str):
         return JSONResponse({"error": "run not found"}, status_code=404)
     RUNS[run_id]["agent"].stop()
     return {"ok": True}
-
-
-class SendDecisionIn(BaseModel):
-    approved: bool
-
-
-@app.post("/api/research/{run_id}/send_decision")
-def send_decision(run_id: str, body: SendDecisionIn):
-    """发送确认卡的决定回填：批准 → 投递服务真实发送；取消 → 放弃。"""
-    if run_id not in RUNS:
-        return JSONResponse({"error": "run not found"}, status_code=404)
-    ok = RUNS[run_id]["agent"].resolve_send(body.approved)
-    return {"ok": ok}
 
 
 @app.get("/api/runs/{run_id}/events")

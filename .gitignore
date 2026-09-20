@@ -11,3 +11,7 @@ notes/agent_memory/
 notes/memory.json
 notes/memory_test.json
 sessions/
+
+# Office 临时锁文件
+~$*
+docs/~$*

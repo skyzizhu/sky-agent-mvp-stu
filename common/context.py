@@ -84,6 +84,15 @@ def compact_messages(client, messages: list,
     msg, usage = call_llm(client, summary_prompt)
     summary = msg.content or ""
 
+    # ★全量 IO：与主循环 step 节点同构——压缩调用的完整请求体/响应对象/token 明细
+    resp_json = msg.model_dump() if hasattr(msg, "model_dump") else {"content": str(msg)}
+    usage_detail = {
+        "prompt": getattr(usage, "prompt_tokens", None),
+        "completion": getattr(usage, "completion_tokens", None),
+        "cached": getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None),
+        "reasoning": getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None),
+    }
+
     new_messages = []
     if system:
         new_messages.append(system)
@@ -97,7 +106,11 @@ def compact_messages(client, messages: list,
              "total_before": len(messages), "total_after": len(new_messages),
              "method": "LLM摘要(保留目标/发现/待办/约束) + 最近原文保留",
              "purpose": "对抗context rot与token成本：旧历史有损压缩，事实由笔记兜底",
-             # ★ 全量 IO：交给摘要模型的完整输入 + 摘要模型的完整输出
+             # ★ 全量 IO：交给摘要模型的完整请求体（messages，无 tools）+ 完整响应对象
+             "request_json": {"model": config.MODEL, "messages": summary_prompt},
+             "response_json": resp_json,
+             "usage_detail": usage_detail,
+             # 文本版（兼容旧前端/快速阅读）
              "summarizer_input": render_messages_for_summary(old),
              "summarizer_output": summary,
              "usage": usage,

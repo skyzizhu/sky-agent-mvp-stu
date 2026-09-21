@@ -492,6 +492,14 @@ function renderEvent(ev, live){
 
     case 'compact': {
       const st = ev.stats || {};
+      const ioBlock = st.request_json ?
+        `<b>① 压缩调用的完整输入（请求体全量 JSON：messages 数组，无 tools——档案员只做摘要）</b>` +
+        `<pre>${esc(JSON.stringify(st.request_json, null, 1))}</pre>` +
+        `<b>② 摘要模型的完整输出（全字段，key 和 value 一个不落）</b>` +
+        `<pre>${esc(JSON.stringify(st.response_json, null, 1))}</pre>` +
+        `<b>③ token 明细</b>：输入 ${st.usage_detail?.prompt ?? '?'} / 输出 ${st.usage_detail?.completion ?? '?'} / 思考 ${st.usage_detail?.reasoning ?? 0} / 缓存命中 ${st.usage_detail?.cached ?? 0}<br>` :
+        `<b>压缩调用输入（旧版存档仅存文本）</b>：<pre>${esc(st.summarizer_input || '（未记录）')}</pre>` +
+        `<b>压缩调用输出</b>：<pre>${esc(st.summarizer_output || ev.summary || '（未记录）')}</pre>`;
       addSub(sub,
         `★ 上下文压缩：${ev.before} → ${ev.after} 字符`,
         `<b>压缩目的</b>：对抗 context rot 与 token 成本——上下文越长，模型对早期信息的召回越差，` +
@@ -501,8 +509,8 @@ function renderEvent(ev, live){
         `重建为 [system + 摘要 + 最近 ${st.kept_recent??'?'} 条原文]。<br>` +
         `<b>压缩效果</b>：摘要 ${st.summary_chars??'?'} 字符替代 ${st.old_messages??'?'} 条消息；` +
         `总长度 ${st.total_before??'?'} → ${st.total_after??'?'} 字符。<br>` +
-        `<b>④ 压缩调用的完整输入（交给摘要模型的旧历史全文，含此前轮次累积的摘要）</b>：<pre>${esc(st.summarizer_input || '（本次运行未记录）')}</pre>` +
-        `<b>⑤ 压缩调用的完整输出（摘要全文，即替换旧历史的那段文字）</b>：<pre>${esc(st.summarizer_output || ev.summary || '')}</pre>`);
+        ioBlock +
+        `<b>摘要全文（即替换旧历史、注入回上下文的那段文字）</b>：<pre>${esc(ev.summary || st.summarizer_output || '')}</pre>`);
       break;
     }
 

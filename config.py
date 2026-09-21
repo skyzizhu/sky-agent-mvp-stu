@@ -29,7 +29,7 @@ COMPACT_KEEP_RECENT = int(os.getenv("COMPACT_KEEP_RECENT", "20"))  # 压缩时�
 
 
 # Stage 11：预算档位（快问/标准/深度）——按任务类型选，而非全局一刀切
-BUDGET_TIERS = {"quick": 20000, "standard": 50000, "deep": 120000,
+BUDGET_TIERS = {"quick": 20000, "standard": 50000, "deep": 180000,
                 "unlimited": None}   # None = 不限 token（步数/死线/熔断仍生效）
 DEFAULT_BUDGET_TIER = "standard"
 

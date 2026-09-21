@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Sky Research Agent · 全景流程图（用户输入 → 报告输出）</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --line:#e3e6ec; --txt:#1c2333; --dim:#69718a;
+          --blue:#2563eb; --green:#188554; --orange:#b45309; --red:#c93c37;
+          --purple:#7c3aed; --surface:#f2f4f8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.65 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  header { position:sticky; top:0; z-index:9; background:#fff; border-bottom:1px solid var(--line);
+           padding:14px 24px; }
+  header h1 { font-size:17px; margin:0 0 4px; }
+  header .sub { color:var(--dim); font-size:12px; }
+  .wrap { max-width:1080px; margin:0 auto; padding:20px 16px 80px; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; margin:14px 0 6px; font-size:12px; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; }
+  .dot { width:11px; height:11px; border-radius:3px; display:inline-block; }
+  .phase { border:2px solid var(--line); border-radius:14px; margin:26px 0; background:#fff; overflow:hidden; }
+  .phase-h { padding:12px 18px; font-size:15px; font-weight:700; color:#fff; }
+  .p0 .phase-h { background:#334155; } .p1 .phase-h { background:#1d4ed8; }
+  .p2 .phase-h { background:#b45309; } .p3 .phase-h { background:#15803d; }
+  .p4 .phase-h { background:#7c3aed; } .p5 .phase-h { background:#be123c; }
+  .phase-b { padding:16px 18px 20px; }
+  .node { border:1.5px solid var(--line); border-radius:10px; padding:10px 14px; margin:0;
+          background:#fbfcfe; }
+  .node + .arr, .decision + .node, .node + .decision { position:relative; }
+  .arr { text-align:center; color:#94a3b8; font-size:15px; padding:2px 0; line-height:1.4; }
+  .arr .lbl { background:#eef2f7; border-radius:99px; padding:1px 10px; font-size:11.5px; color:#475569; }
+  .decision { border:1.5px dashed #f59e0b; background:#fffbeb; border-radius:10px; padding:10px 14px; }
+  .decision .q { font-weight:700; color:#92400e; }
+  .branch { display:flex; gap:8px; align-items:baseline; margin-top:6px; font-size:13px; }
+  .branch .tag { flex-shrink:0; background:#fef3c7; border-radius:99px; padding:1px 9px;
+                 font-size:11.5px; color:#92400e; }
+  .branch .go { color:#334155; }
+  .exit { border:1.5px solid var(--red); background:#fef2f2; border-radius:10px;
+          padding:9px 14px; margin:8px 0; font-size:13px; }
+  .exit.ok { border-color:var(--green); background:#f0fdf4; }
+  .node-code { display:inline-block; background:#1e293b; color:#e2e8f0; border-radius:5px;
+               font:600 11px/1 ui-monospace,monospace; padding:3px 7px; margin-right:7px; }
+  .node h4 { margin:0 0 5px; font-size:14px; }
+  .node h4 .ev { color:var(--blue); font-size:12px; font-weight:600; margin-left:6px; }
+  .kv { margin:5px 0 0; font-size:12.5px; color:#475569; }
+  .kv b { color:#1e293b; }
+  details { margin-top:7px; border-top:1px dashed var(--line); padding-top:7px; }
+  summary { cursor:pointer; color:var(--blue); font-size:12px; user-select:none; }
+  details .d { font-size:12.5px; color:#475569; line-height:1.7; padding-top:5px; }
+  details .d b { color:#1e293b; }
+  .num { font-variant-numeric:tabular-nums; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; margin-top:6px; }
+  th, td { border:1px solid var(--line); padding:4px 9px; text-align:left; }
+  th { background:var(--surface); }
+  .note { background:#eef4ff; border:1px solid #c7d7f5; border-radius:8px;
+          padding:8px 12px; font-size:12px; color:#274a8f; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sky Research Agent · 全景流程图</h1>
+  <div class="sub">用户输入 → 报告输出 ｜ 与 common/agent_core.py run() 逐节点对应 ｜ 事件编号 = 工作台执行流编号 ｜ 节点号 N00-N32 = PRD V4.0</div>
+</header>
+<div class="wrap">
+
+<div class="legend">
+  <span><i class="dot" style="background:#334155"></i>启动准备</span>
+  <span><i class="dot" style="background:#1d4ed8"></i>主循环（每步重复）</span>
+  <span><i class="dot" style="background:#b45309"></i>判断与分支</span>
+  <span><i class="dot" style="background:#15803d"></i>收尾与交付</span>
+  <span><i class="dot" style="background:#7c3aed"></i>外置记忆</span>
+  <span><i class="dot" style="background:#be123c"></i>异常与兜底</span>
+  <span style="color:var(--dim)">每个节点可点击展开深挖细节</span>
+</div>
+
+<!-- ================ 第 0 步 ================ -->
+<div class="phase p0"><div class="phase-h">第 0 步 · 启动准备（只执行一次）</div><div class="phase-b">
+
+  <div class="node">
+    <h4><span class="node-code">N00</span>用户输入与启动校验 <span class="ev">前端</span></h4>
+    <div>用户提交研究问题 + 预算档位（快问 2 万 / 标准 5 万 / 深度 12 万 / 不限）。</div>
+    <div class="kv"><b>校验</b>：问题非空；档位无效回落标准档；服务不可用时报错并保留输入。</div>
+    <details><summary>展开细节</summary><div class="d">
+      前端把 session_id 一并提交（空 = 新会话）。运行注册只在这一步做一次（<b>每轮恰好记录一次，防止重复</b>）。
+      运行线程启动后，SSE 通道建立，前端进入实时视图。
+    </div></details>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4><span class="node-code">N01 · 0.1</span>记忆注入（长期偏好）</h4>
+    <div>从 memory.json 召回用户稳定偏好，经<b>相关性门禁</b>过滤后拼入 system。</div>
+    <div class="kv"><b>门禁规则</b>：通用偏好（语言/格式/研究规范）全量注入；领域偏好（定价/合规等）须同时命中「意图关键词 + 实体交集」才召回——<b>防止上次的定价偏好污染这次的技术调研</b>。</div>
+    <details><summary>展开细节</summary><div class="d">
+      事件 memory_inject 携带 {count, total, filtered}。空记忆或全不相关 → 注入空串，不占 token。
+      记忆来自历史会话结束时的自动提取（只收用户稳定偏好，研究内容严禁混入），合并走 LLM 语义去重、上限 20 条。
+    </div></details>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4><span class="node-code">N01+</span>会话上下文注入（多轮时）</h4>
+    <div>同一会话的第二轮起：注入上轮摘要 + 关键发现 + 共享笔记——模型「知道上次研究到哪了」。</div>
+    <details><summary>展开细节</summary><div class="d">
+      来源：context.json 快照（每轮结束保存：摘要 / 关键发现 / 待办）+ sessions/{sid}/notes.md 前 2000 字。
+      新会话此节点为空。
+    </div></details>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4><span class="node-code">N02 · 0.2</span>预算与安全边界初始化</h4>
+    <div>建立预算记账（档位上限）、步数上限 20、危险工具清单公示。</div>
+    <div class="kv"><b>三水位</b>：预算 80% 软提醒 → <b>95% 硬收尾（物理摘除工具箱）</b> → 100% 强停只允许结题/笔记兜底。</div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4>MCP 外部工具接入（可选）</h4>
+    <div>按 MCP_SERVERS 配置接入外部工具生态；<b>写类工具自动进危险分级，执行前必须 HITL</b>。</div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4><span class="node-code">N04 · 0.3</span>研究规划（独立 LLM 调用）</h4>
+    <div>规划师把问题拆成 <b>≤3 个带查证要点的子问题</b>（JSON mode）。规划-执行分离：规划师不看工具箱。</div>
+    <div class="kv"><b>失败降级</b>：解析失败 → 空大纲继续，不阻塞主流程。</div>
+    <details><summary>展开细节</summary><div class="d">
+      0.3 事件带五区块详单：① 规划调用的完整请求 JSON ② 模型全字段输出 ③ token 明细 ④ 子问题拆解 ⑤ 大纲原文。
+      规划质量 = 后面 20 步的走向，PM 应亲自审规划输出（是否覆盖用户意图、是否互相独立）。
+    </div></details>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4><span class="node-code">N05 · 0.4</span>大纲落地（三份产物）</h4>
+    <div>同一份大纲落地为：<b>① system 追加【研究大纲】</b>（每轮可见，对抗遗忘）<b>② 动态看板</b>（子问题状态机：待查证/查证中/已完成）<b>③ final 返回值</b>（评测核对覆盖度用）。</div>
+  </div>
+
+</div></div>
+<div class="arr" style="font-size:18px">▼ 进入主循环</div>
+
+<!-- ================ 主循环 ================ -->
+<div class="phase p1"><div class="phase-h">主循环 · 第 1~20 步（一圈一结清）</div><div class="phase-b">
+
+  <div class="node">
+    <h4><span class="node-code">N06 · 每轮开头</span>注入进度与看板</h4>
+    <div>把「第 N/20 步 · 预算水位 + 看板状态（[x]已完成 / [~]查证中 / [ ]待查证）」拍给模型。</div>
+    <div class="kv"><b>全绿触发</b>：追加「🎉 全部核销完成，立即输出报告，严禁继续检索」——收敛的物理信号。</div>
+    <div class="kv"><b>阶梯自检</b>：step≥4 或预算≥50% 追加「主干有据即止」提醒；step≥19 追加死线警告。</div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="decision">
+    <div class="q">用户点了 ⏹ 中止？</div>
+    <div class="branch"><span class="tag">是（仅一次）</span><span class="go">注入收尾指令（user_stop），循环继续——模型停止点菜，转为输出报告</span></div>
+    <div class="branch"><span class="tag">否</span><span class="go">继续</span></div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="decision">
+    <div class="q">死线（第 19~20 步）或预算过 80%？</div>
+    <div class="branch"><span class="tag">是</span><span class="go">注入死线 / 软提醒（各一次）——实测可能被无视，后续有硬收尾兜底</span></div>
+    <div class="branch"><span class="tag">否</span><span class="go">正常继续</span></div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4><span class="node-code">N07</span>调用 LLM（带工具说明书）</h4>
+    <div>模型基于「system 规则 + 大纲 + 记忆 + 全部历史 + 本轮注入」自主决定：调用哪些工具、参数是什么。</div>
+    <div class="kv"><b>留档</b>：step 事件携带完整请求 JSON（messages 全量）、模型全字段输出、token 四项明细——<b>压缩前后的对比学习就看这里</b>。</div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="decision">
+    <div class="q">调用协议异常？（网络/限流/格式）</div>
+    <div class="branch"><span class="tag">是</span><span class="go"><b style="color:var(--red)">error 出口</b>——错误记入日志，循环外兜底链接管</span></div>
+    <div class="branch"><span class="tag">否</span><span class="go">继续</span></div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="decision">
+    <div class="q">无 tool_calls 且正文有效？</div>
+    <div class="branch"><span class="tag">是</span><span class="go"><b style="color:var(--green)">model_done 出口</b>——正文即报告（唯一优雅出口，任何一步都允许发生）</span></div>
+    <div class="branch"><span class="tag">否（还有点菜）</span><span class="go">先过预算硬收尾判断 ↓</span></div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="decision">
+    <div class="q">预算 ≥95% 或已耗尽？</div>
+    <div class="branch"><span class="tag">是</span><span class="go"><b style="color:var(--red)">budget_hard_stop 出口</b>——① 先抢救未执行的笔记落盘 ② 摘除未应答点菜（协议自愈）③ <b>拔掉工具箱</b>（请求不带 tools，物理上无法再调）④ 笔记全文嵌入结题指令 ⑤ 无工具强制结题</span></div>
+    <div class="branch"><span class="tag">否</span><span class="go">进入上下文检查 ↓</span></div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="decision">
+    <div class="q">本轮输入 token &gt; 压缩阈值？（窗口 1M × 60% = 600K）</div>
+    <div class="branch"><span class="tag">是</span><span class="go"><b>上下文压缩</b>：旧对话交给摘要模型（保留目标/发现含来源/待办/约束，≤800 字）→ 重建为 [system + 摘要 + 最近 20 条原文]。压缩调用自身全量留档、计入预算</span></div>
+    <div class="branch"><span class="tag">否</span><span class="go">直接执行工具 ↓</span></div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4><span class="node-code">N08-N20</span>逐个执行工具（一圈一结清）</h4>
+    <div><b>检索</b>（Tavily 优先，免费引擎降级；Query 去重）→ <b>网页抓取</b>（静态失败自动降级无头浏览器；域名失败≥2 次改道）→ <b>单页萃取</b>（&gt;800 字触发，压减 80%+）→ <b>note_write</b>（写盘 + 自动核销看板）→ 结果逐条回填（tool_call_id 配对）。</div>
+    <details><summary>展开细节</summary><div class="d">
+      <b>危险工具</b>命中 → 暂停弹确认横幅（参数 + 原因），批准执行 / 拒绝回执引导改道，600 秒超时视为拒绝。<br>
+      <b>核销联动</b>：note_write 内容命中「子问题 X」→ 看板自动核销并附结论摘要。<br>
+      <b>检索类结果</b>进入证据池（评测 judge 只对照这些原始证据打「有据」分）。<br>
+      <b>预算死线抢救</b>：若本轮之后触发硬收尾，未执行的 note_write 会被自动抢救落盘，发现不随裁剪丢失。
+    </div></details>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="decision">
+    <div class="q">工具连续失败 ≥4 次？</div>
+    <div class="branch"><span class="tag">是（至多 2 次）</span><span class="go">注入熔断指令：禁止重复同方式，基于已有信息出阶段结论</span></div>
+    <div class="branch"><span class="tag">否</span><span class="go">回主循环开头，进入下一轮 ⟲</span></div>
+  </div>
+
+</div></div>
+
+<!-- ================ 收尾 ================ -->
+<div class="phase p5"><div class="phase-h">收尾 · 五出口汇合与兜底链</div><div class="phase-b">
+
+  <div class="exit ok">✅ <b>model_done</b> — 模型停止点菜、正文有效（唯一优雅出口）</div>
+  <div class="exit">🛡️ <b>budget_hard_stop</b> — 预算 95% 拔工具强制结题</div>
+  <div class="exit">⏹ <b>user_stop</b> — 用户中止后模型收尾</div>
+  <div class="exit">🔢 <b>max_steps</b> — 20 步耗尽强制结题</div>
+  <div class="exit">❌ <b>error</b> — 协议异常，循环外兜底</div>
+
+  <div class="arr">▼ 五路汇合，执行兜底链</div>
+
+  <div class="node">
+    <h4>兜底链（保证交付物非空）</h4>
+    <div class="kv"><b>判断 1</b>：已持有有效报告？→ 是则直接进入交付。<br>
+    <b>判断 2</b>：否则发一次<b>无工具强制结题调用</b>（笔记全文嵌入指令，模型物理上无法再检索）。<br>
+    <b>判断 3</b>：仍无效 → <b>笔记原文直接兜底成报告</b>——「查到什么就交付什么」，绝不全损。</div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node">
+    <h4>收尾三件事</h4>
+    <div><b>记忆</b>：LLM 从 transcript 提取用户稳定偏好（严禁混入研究内容）→ 语义合并进 memory.json；<br>
+    <b>会话</b>：保存上下文快照（摘要/关键发现/待办）供下轮注入；<br>
+    <b>日志</b>：RunLog 落盘（步数/工具序列/token/停止原因/错误清单）。</div>
+  </div>
+  <div class="arr">▼</div>
+
+  <div class="node" style="border-color:var(--green); background:#f0fdf4;">
+    <h4><span class="node-code">N28</span>🏁 final 事件：报告输出</h4>
+    <div>报告全文（含 [n](url) 引用与参考小节）推送前端渲染；若为阶段性结题，末尾附「当前未完成项 / 下一步」。</div>
+  </div>
+
+</div></div>
+
+<!-- ================ 横切说明 ================ -->
+<div class="phase" style="border-color:#c7d7f5"><div class="phase-h" style="background:#eef4ff; color:#1c2d4c">贯穿全程的三条横切线（不属于任何单一步骤）</div><div class="phase-b">
+  <div class="node"><h4>① 外置记忆（note_write / note_read）</h4>
+    <div>发现随手写入磁盘（不受压缩影响）→ 看板自动核销 → 收尾读回成文（硬收尾时系统直接嵌入）。<b>事实永远在「上下文或磁盘」之一，不存在丢失态。</b></div></div>
+  <div class="arr">▼</div>
+  <div class="node"><h4>② 评测体系（独立于运行）</h4>
+    <div>12 题三件套，四维评分（有据/有源/覆盖/简洁），judge 只对照原始证据（不上网）；改前改后双跑，任一维度降 0.05 阻断发布。当前基线 0.66，目标 ≥0.80。</div></div>
+  <div class="arr">▼</div>
+  <div class="node"><h4>③ 可观测（贯穿每一步）</h4>
+    <div>18 种事件全量留痕（实时 + 存档），颗粒可下钻全量 IO；排障口诀：<b>先查运行日志有无收尾记录——有 = 传输层问题，没有 = 内核问题</b>。</div></div>
+</div></div>
+
+</div>
+</body>
+</html>

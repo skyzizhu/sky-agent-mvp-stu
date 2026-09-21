@@ -115,6 +115,12 @@ def index():
     return FileResponse(ROOT / "webapp" / "static" / "index.html")
 
 
+@app.get("/flow", include_in_schema=False)
+def agent_flow_page():
+    """全景流程图（HTML 交互版）：从用户输入到报告输出的全部节点。"""
+    return FileResponse(ROOT / "deliverables" / "02-设计层" / "agent-flow.html")
+
+
 @app.get("/api/config")
 def get_config():
     budget = (3000 if os.getenv("LOW_BUDGET")

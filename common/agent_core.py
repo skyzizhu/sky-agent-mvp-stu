@@ -169,6 +169,28 @@ def _trim_unanswered_tool_calls(messages: list):
 
 
 
+
+def _salvage_pending_note_writes(messages: list) -> int:
+    """硬收尾/强制结题前，抢救最后一条 assistant 消息里未执行的 note_write：
+    模型收尾前的发现必须落盘（笔记兜底的前提是笔记在），否则随裁剪丢失。
+    返回抢救的条数。"""
+    saved = 0
+    for m in reversed(messages):
+        if m.get("role") != "assistant":
+            continue
+        for tc in (m.get("tool_calls") or []):
+            fn = (tc.get("function") or {})
+            if fn.get("name") != "note_write":
+                continue
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+                tools_mod.note_write(args.get("content", ""))
+                saved += 1
+            except Exception:
+                pass
+        break   # 只看最后一条 assistant
+    return saved
+
 def _dump_structure(messages: list, rec_hint: str):
     """诊断探针：把消息结构 dump 到 logs/，排查配对类 400。"""
     import json as _json
@@ -249,9 +271,10 @@ class ResearchAgent:
         return f"未找到编号为 {sub_id} 的子问题，当前可用子问题编号：{[it['id'] for it in self.checklist]}"
 
     def sync_checklist_from_note(self, note_content: str):
-        """启发式同步：若笔记中提及某子问题且该项尚未完成，自动标记为已完成。"""
+        """启发式同步：若笔记中提及某子问题且该项尚未完成，自动标记为已完成。
+        返回被核销的看板项 dict（供事件展示核销联动），未命中返回 None。"""
         if not self.checklist or not note_content:
-            return
+            return None
         import re
         for item in self.checklist:
             if item["status"] == "completed":
@@ -269,6 +292,8 @@ class ResearchAgent:
                 first_line = re.sub(r"^[#\-\*\s【】\[\]子问题0-9：:]+", "", first_line).strip()
                 summary = first_line[:50] or "已记录相关调研笔记"
                 self.update_checklist_item(item["id"], "completed", summary)
+                return {"id": item["id"], "q": item["q"], "summary": summary}
+        return None
 
     def _session_context(self) -> str:
         """多轮对话上下文：注入 session 的历史发现和对话轮次，让模型知道之前研究了什么。"""
@@ -512,6 +537,7 @@ class ResearchAgent:
             #   最后一次调用不带 tools 参数，模型物理上无法再点菜，
             #   由代码主动从磁盘提取调研笔记全文嵌入 Prompt，杜绝模型输出裸 DSML
             if budget.exhausted or budget.near_limit(0.95):
+                _salvage_pending_note_writes(messages)   # ★先抢救未执行的笔记，再裁剪
                 _trim_unanswered_tool_calls(messages)   # ⚠P40：先恢复协议合法
                 if config.DEBUG_DUMP:
                     _dump_structure(messages, rec_hint="hard_stop")
@@ -591,10 +617,22 @@ class ResearchAgent:
                     errors.append(f"{tc.function.name} 连续失败(第{fail_streak}次)")
                 else:
                     fail_streak = 0
+                note_sync = None
                 if tc.function.name == "note_write":
-                    self.sync_checklist_from_note(args.get("content", ""))
+                    note_sync = self.sync_checklist_from_note(args.get("content", ""))
                 if tc.function.name in ("web_search", "fetch_url", "fetch_js"):
                     evidence.append(str(result)[:1000])
+
+                # ★笔记工具的学习级元数据：核销联动 + 笔记本现状
+                note_extra = {}
+                if tc.function.name in ("note_write", "note_read"):
+                    notes_p = tools_mod._current_notes_file()
+                    notes_text = ""
+                    if notes_p and Path(notes_p).exists():
+                        notes_text = Path(notes_p).read_text(encoding="utf-8")
+                    note_extra = dict(note_sync=note_sync,
+                                      notebook_chars=len(notes_text),
+                                      notebook_entries=notes_text.count("【子问题"))
 
                 cache_hit = bool(getattr(self.cache, "last_hit", False))
                 cache_type = getattr(self.cache, "last_hit_type", None)
@@ -611,7 +649,7 @@ class ResearchAgent:
                                cache_hit=cache_hit, cache_type=cache_type,
                                extracted=extracted, extract_ratio=extract_ratio,
                                before_chars=before_chars, after_chars=after_chars,
-                               auto_fallback=auto_fallback)
+                               auto_fallback=auto_fallback, **note_extra)
                 appended = {"role": "tool", "tool_call_id": tc.id,
                             "content": result}
                 messages.append(appended)
@@ -633,6 +671,7 @@ class ResearchAgent:
             # ★ 步数耗尽：不丢占位符——强制无工具收尾（同预算硬收尾路径）：
             #   摘除未应答点菜（协议合法）→ 带笔记输出《阶段性结题报告》
             stopped_reason = "max_steps"
+            _salvage_pending_note_writes(messages)   # ★先抢救未执行的笔记
             _trim_unanswered_tool_calls(messages)   # ⚠P40：末尾未应答点菜作废
             forced_msg = _build_forced_final_msg()
             messages.append({"role": "user", "content": forced_msg})
@@ -654,6 +693,7 @@ class ResearchAgent:
         # ★ 兜底保证：非正常停止时也必须有最终产出（强制无工具结题）
         if stopped_reason in ("budget_hard_stop", "budget_exhausted", "max_steps",
                               "user_stop", "error") and not final:
+            _salvage_pending_note_writes(messages)   # ★先抢救未执行的笔记
             _trim_unanswered_tool_calls(messages)   # ⚠P40：先恢复协议合法
             forced_msg = _build_forced_final_msg()
             messages.append({"role": "user", "content": forced_msg})

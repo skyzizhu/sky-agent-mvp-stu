@@ -514,7 +514,7 @@ function renderEvent(ev, live){
       break;
     }
 
-    case 'tool_result':
+    case 'tool_result': {
       const cacheBadge = ev.cache_hit
         ? ` <span class="tt" style="background:#e6f4ea;color:#137333;font-weight:600">⚡ 命中缓存/免请求</span>`
         : '';
@@ -524,11 +524,29 @@ function renderEvent(ev, live){
       const fallbackBadge = ev.auto_fallback
         ? ` <span class="tt" style="background:#f3e8fd;color:#7627bb;font-weight:600">🌐 自动降级JS渲染</span>`
         : '';
+      const isNote = ev.name === 'note_write' || ev.name === 'note_read';
+      const noteBadge = isNote ? ` <span class="tt" style="background:#fdf6e3;color:#9a6700;font-weight:600">📝 外置记忆</span>` : '';
+      const cacheBadgeAll = cacheBadge + noteBadge;
+      let noteDetail = '';
+      if (ev.name === 'note_write') {
+        const sync = ev.note_sync;
+        noteDetail =
+          `<b>📝 沉淀到磁盘笔记的内容（外置记忆，不受压缩影响）</b>：<pre>${esc((ev.args && ev.args.content) || '')}</pre>` +
+          (sync
+            ? `<b>🎯 核销联动</b>：自动核销 [子问题 ${esc(String(sync.id))}]，结论摘要：${esc(sync.summary)}<br>`
+            : `<b>核销联动</b>：本条未命中子问题标记，不触发核销<br>`) +
+          `<b>📓 笔记本现状</b>：累计 ${ev.notebook_chars ?? '?'} 字（磁盘文件，收尾时读回成文的原材料）<br>`;
+      }
+      if (ev.name === 'note_read') {
+        noteDetail = `<b>📓 笔记本现状</b>：累计 ${ev.notebook_chars ?? '?'} 字——散落各轮的发现此刻收拢在模型眼前，是报告的原材料<br>`;
+      }
       addSub(sub,
-        `🔧 ${ev.name}${cacheBadge}${extractBadge}${fallbackBadge} → ${String(ev.result).slice(0,110)}` + msBadge(ev.tool_ms),
+        `🔧 ${ev.name}${cacheBadgeAll}${extractBadge}${fallbackBadge} → ${String(ev.result).slice(0,110)}` + msBadge(ev.tool_ms),
         `<b>输入参数</b>：<pre>${esc(JSON.stringify(ev.args, null, 1))}</pre>` +
-        `<b>完整输出（前4000字符）</b>：<pre>${esc(ev.full_result || ev.result)}</pre>`);
+        `<b>完整输出（前4000字符）</b>：<pre>${esc(ev.full_result || ev.result)}</pre>` +
+        noteDetail);
       break;
+    }
 
     case 'approval_request':
       $('approval').style.display = live ? '' : 'none';

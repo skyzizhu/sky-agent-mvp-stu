@@ -501,8 +501,8 @@ function renderEvent(ev, live){
         `重建为 [system + 摘要 + 最近 ${st.kept_recent??'?'} 条原文]。<br>` +
         `<b>压缩效果</b>：摘要 ${st.summary_chars??'?'} 字符替代 ${st.old_messages??'?'} 条消息；` +
         `总长度 ${st.total_before??'?'} → ${st.total_after??'?'} 字符。<br>` +
-        `<b>④ 压缩调用的完整输入（交给摘要模型的旧历史全文）</b>：<pre>${esc(ev.summarizer_input || '（本次运行未记录，早于该功能）')}</pre>` +
-        `<b>⑤ 压缩调用的完整输出（摘要全文）</b>：<pre>${esc(ev.summary)}</pre>`);
+        `<b>④ 压缩调用的完整输入（交给摘要模型的旧历史全文，含此前轮次累积的摘要）</b>：<pre>${esc(st.summarizer_input || '（本次运行未记录）')}</pre>` +
+        `<b>⑤ 压缩调用的完整输出（摘要全文，即替换旧历史的那段文字）</b>：<pre>${esc(st.summarizer_output || ev.summary || '')}</pre>`);
       break;
     }
 

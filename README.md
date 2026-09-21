@@ -190,7 +190,7 @@ python evals/run_eval.py          # 全量 12 题（正式基线）
 | [realize.md](./realize.md) | **系统实现图纸**：13 个大节点 × 小节点全景——做什么/技术/目标/衔接/注意，含数据流图与产品决策映射 | 想看"整套系统怎么串起来"、对外讲解架构时 |
 | [AGENT_NODES.md](./AGENT_NODES.md) | **节点详解手册**：节点 0–21 的目标/作用/做法/输入/输出/注意点，含全局架构图 | 学每个节点前预习、复习时对照 |
 | [CONTEXT_COMPACTION.md](./CONTEXT_COMPACTION.md) | **上下文工程与压缩手册**：7 大截断与压缩机制全景——时机/方案(LLM与代码)/规则/效果/目标，含对比速查表与架构流图 | 研究上下文控容、对抗 Context Rot、设计工具返回格式时 |
-| [PITFALLS.md](./PITFALLS.md) | **37 条踩坑清单**：各节点易错问题 → 造成的状况 → 最终效果 → 解决方案 | 写代码前后对照检查；面试备战 |
+| [PITFALLS.md](./PITFALLS.md) | **60 条踩坑清单**：各节点易错问题 → 造成的状况 → 最终效果 → 解决方案 | 写代码前后对照检查；面试备战 |
 | [notes/](./notes/) | 10 个阶段的复盘笔记（含踩坑实录与实测数据） | 每阶段结束时回顾 |
 | [evals/](./evals/) | 评测集（12 题）+ LLM-as-judge + 三方对比实验报告 | 任何改动前后跑回归 |
 | [playground/](./playground/) | 交互式 LLM 实验室：表单构造请求、原始响应展示、思考模式开关 | 研究字段/参数行为时 |
@@ -336,7 +336,7 @@ agent-mvp-stu/
 ├── README.md            # 本方案（学习路线图）
 ├── AGENT_NODES.md       # 节点详解手册（节点 0-21，原理+避坑）
 ├── CONTEXT_COMPACTION.md # 上下文工程与压缩手册（7大截取方案与规则）
-├── PITFALLS.md          # 37 条踩坑清单（易错点→状况→效果→解决）
+├── PITFALLS.md          # 60 条踩坑清单（易错点→状况→效果→解决）
 ├── realize.md           # 系统实现图纸（13 个大节点全景串联）
 ├── config.py            # 全局配置（模型三要素 + 压缩/循环参数）
 ├── common/              # 公共模块：llm_client / tools / cache / context / memory / guardrails / mcp_client / observability

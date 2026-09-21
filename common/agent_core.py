@@ -171,24 +171,31 @@ def _trim_unanswered_tool_calls(messages: list):
 
 
 def _salvage_pending_note_writes(messages: list) -> int:
-    """硬收尾/强制结题前，抢救最后一条 assistant 消息里未执行的 note_write：
-    模型收尾前的发现必须落盘（笔记兜底的前提是笔记在），否则随裁剪丢失。
+    """硬收尾/强制结题前，抢救「未执行的 note_write」：模型收尾前的发现必须
+    落盘（笔记兜底的前提是笔记在），否则随裁剪丢失。
+    只救真正未回填的调用（按 tool_call_id 比对），已执行的不重复落盘。
     返回抢救的条数。"""
+    answered = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
     saved = 0
     for m in reversed(messages):
-        if m.get("role") != "assistant":
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
             continue
-        for tc in (m.get("tool_calls") or []):
+        for tc in m["tool_calls"]:
             fn = (tc.get("function") or {})
             if fn.get("name") != "note_write":
                 continue
+            if tc.get("id") in answered:
+                continue   # 已执行并回填过，不重复落盘
             try:
                 args = json.loads(fn.get("arguments") or "{}")
-                tools_mod.note_write(args.get("content", ""))
+                content = (args.get("content") or "").strip()
+                if not content:
+                    continue
+                tools_mod.note_write(content)
                 saved += 1
             except Exception:
                 pass
-        break   # 只看最后一条 assistant
+        break   # 只检查最后一条带点菜的 assistant
     return saved
 
 def _dump_structure(messages: list, rec_hint: str):

@@ -173,18 +173,24 @@ def _trim_unanswered_tool_calls(messages: list):
 def _salvage_pending_note_writes(messages: list) -> int:
     """硬收尾/强制结题前，抢救「未执行的 note_write」：模型收尾前的发现必须
     落盘（笔记兜底的前提是笔记在），否则随裁剪丢失。
-    只救真正未回填的调用（按 tool_call_id 比对），已执行的不重复落盘。
-    返回抢救的条数。"""
-    answered = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
+    兼容 dict 与 pydantic 两种消息形态（与 _trim 同款防御，⚠回归教训）；
+    已回填（tool_call_id 已有结果）的不重复执行。返回抢救的条数。"""
+    def _get(obj, key, default=None):
+        return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
+
+    answered = set()
+    for m in messages:
+        if _get(m, "role") == "tool":
+            answered.add(_get(m, "tool_call_id"))
     saved = 0
     for m in reversed(messages):
-        if m.get("role") != "assistant" or not m.get("tool_calls"):
+        if _get(m, "role") != "assistant" or not _get(m, "tool_calls"):
             continue
-        for tc in m["tool_calls"]:
-            fn = (tc.get("function") or {})
-            if fn.get("name") != "note_write":
+        for tc in _get(m, "tool_calls"):
+            fn = _get(tc, "function", None)
+            if _get(fn, "name", "") != "note_write":
                 continue
-            if tc.get("id") in answered:
+            if _get(tc, "id") in answered:
                 continue   # 已执行并回填过，不重复落盘
             try:
                 args = json.loads(fn.get("arguments") or "{}")

@@ -27,7 +27,13 @@ def make_client() -> OpenAI:
         raise RuntimeError(
             "未配置 API key：请复制 .env.example 为 .env 并填入 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL"
         )
-    return OpenAI(api_key=config.API_KEY, base_url=config.BASE_URL)
+    # 显式超时与重试：防止 API 挂起时整个运行无限卡死（N23 模型降级的前置保护）
+    return OpenAI(
+        api_key=config.API_KEY,
+        base_url=config.BASE_URL,
+        timeout=config.LLM_TIMEOUT,
+        max_retries=config.LLM_MAX_RETRIES,
+    )
 
 
 def call_llm(client: OpenAI, messages: list, tools: list | None = None, **extra):

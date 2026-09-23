@@ -15,6 +15,10 @@ API_KEY = os.getenv("LLM_API_KEY", "")        # 你的 key
 BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")  # 服务地址
 MODEL = os.getenv("LLM_MODEL", "deepseek-chat")  # 模型名，必须支持 tool calling
 
+# LLM 调用保护（N23）：挂起/限流不让运行无限等待
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))        # 单次调用超时（秒）
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))  # SDK 层自动重试次数
+
 # Agent 通用安全参数（Stage 8 会扩展成正式护栏，这里先埋点）
 MAX_LOOP_STEPS = 20           # agent loop 最大轮数，防失控
 MAX_TOOL_RESULT_CHARS = 4000  # 单次工具结果最大字符数，防上下文爆炸

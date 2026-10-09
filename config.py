@@ -24,11 +24,11 @@ MAX_LOOP_STEPS = 20           # agent loop 最大轮数，防失控
 MAX_TOOL_RESULT_CHARS = 4000  # 单次工具结果最大字符数，防上下文爆炸
 
 # Stage 4：上下文工程参数（标准公式：压缩阈值 = 窗口 × 压缩触发比例）
-# 当前模型窗口 1M，60% 触发压缩——为输出与后续工具结果留出 40% 空间，
-# 常规任务（几万至十几万 token）全程不触发，历史原文保留；仅超长任务由压缩兜底
+# 当前模型窗口 1M，10% 触发压缩（= 100K）：标准/深度任务在收尾前后会经历
+# 1-2 次压缩——既控制极端成本，又让压缩机制保持"活跃可观测"（全量 IO 留档）
 CONTEXT_WINDOW = int(os.getenv("CONTEXT_WINDOW", "1000000"))     # 模型上下文窗口（token）
-COMPACTION_RATIO = float(os.getenv("COMPACTION_RATIO", "0.6"))   # 压缩触发比例（窗口占比）
-MAX_CONTEXT_TOKENS = int(CONTEXT_WINDOW * COMPACTION_RATIO)      # = 600,000（自动推导）
+COMPACTION_RATIO = float(os.getenv("COMPACTION_RATIO", "0.1"))   # 压缩触发比例（窗口占比）
+MAX_CONTEXT_TOKENS = int(CONTEXT_WINDOW * COMPACTION_RATIO)      # = 100,000（自动推导）
 COMPACT_KEEP_RECENT = int(os.getenv("COMPACT_KEEP_RECENT", "20"))  # 压缩时保留最近 N 条原文
 
 

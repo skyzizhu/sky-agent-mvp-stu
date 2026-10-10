@@ -459,8 +459,12 @@ class ResearchAgent:
                 all_tools += c.openai_tools()
                 for t in c.openai_tools():
                     n = t["function"]["name"]
-                    if any(k in n for k in ("write", "edit", "move", "create")):
-                        DANGEROUS_TOOLS[n] = "外部MCP写操作：会修改本地文件"
+                    # ★危险关键词（v1.0.1 调整）：动「已有状态」的操作才需人工确认
+                    # （编辑/移动/删除/改名/覆盖/替换）；纯新增（write 新文件、create 目录）
+                    # 不弹——新增是创造，动已有才是破坏
+                    if any(k in n for k in ("edit", "move", "delete", "remove",
+                                            "rename", "replace", "overwrite", "unlink")):
+                        DANGEROUS_TOOLS[n] = "外部MCP操作：会修改或删除已有内容"
             total = sum(len(c.openai_tools()) for c in self.mcp_clients)
             self._emit_sub("mcp", msg=f"已接入 {len(self.mcp_clients)} 个 MCP server，"
                                       f"新增 {total} 个工具（写类已标危险级）")

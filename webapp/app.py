@@ -115,6 +115,16 @@ def index():
     return FileResponse(ROOT / "webapp" / "static" / "index.html")
 
 
+@app.get("/static/{filename}", include_in_schema=False)
+def static_files(filename: str):
+    """前端静态资源（本地化的 JS 库等）。仅允许纯文件名，防路径穿越。"""
+    safe = Path(filename).name
+    target = ROOT / "webapp" / "static" / safe
+    if not target.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(target)
+
+
 @app.get("/flow", include_in_schema=False)
 def agent_flow_page():
     """全景流程图（HTML 交互版）：从用户输入到报告输出的全部节点。"""

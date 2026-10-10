@@ -499,8 +499,8 @@ function renderEvent(ev, live){
         <div class="pc-row" style="margin:8px 0;">
           <div style="display:flex;gap:6px;align-items:center;">
             <span class="sub">${i + 1}</span>
-            <input class="pc-q" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--txt);font-size:12.5px" value="${esc(sq.q || '')}">
-            <button class="rbtn pc-del" onclick="pcDel(this)" style="color:var(--red)">✖</button>
+            <input class="pc-q" style="flex:1;background:var(--input);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--txt);font-size:12.5px" value="${esc(sq.q || '')}">
+            <button class="rbtn pc-del" onclick="pcDel(this)" style="color:var(--err)">✖</button>
           </div>
           ${sq.what_to_verify ? `<div style="font-size:11px;color:var(--dim);margin:2px 0 0 24px">查证要点：${esc(sq.what_to_verify)}</div>` : ''}
         </div>`).join('');
@@ -509,7 +509,7 @@ function renderEvent(ev, live){
         `<div id="pc_rows">${rows}</div>` +
         `<button class="rbtn" onclick="pcAddRow()" style="margin-top:6px;color:var(--dim)">＋ 添加子问题</button>` +
         `<div style="margin-top:12px;display:flex;gap:8px;">
-           <button class="rbtn" id="pc_ok" style="background:var(--green);color:#fff;border-color:var(--green)" onclick="pcDecide('confirm')">✓ 确认执行</button>
+           <button class="rbtn" id="pc_ok" style="background:var(--ok);color:#fff;border-color:var(--ok)" onclick="pcDecide('confirm')">✓ 确认执行</button>
            <button class="rbtn pc-skip" style="color:var(--dim)" onclick="pcDecide('skip')">⏭ 本会话不再询问</button>
          </div>` +
         `<div style="font-size:11px;color:var(--dim);margin-top:6px">可直接修改子问题文字或删除；600 秒未确认将按原计划自动继续</div>`);
@@ -960,8 +960,8 @@ function pcAddRow() {
   var n = document.querySelectorAll('#pc_rows .pc-row').length + 1;
   div.innerHTML = '<div style="display:flex;gap:6px;align-items:center;">' +
     '<span class="sub">' + n + '</span>' +
-    '<input class="pc-q" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--txt);font-size:12.5px">' +
-    '<button class="rbtn pc-del" onclick="pcDel(this)" style="color:var(--red)">✖</button></div>';
+    '<input class="pc-q" style="flex:1;background:var(--input);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--txt);font-size:12.5px">' +
+    '<button class="rbtn pc-del" onclick="pcDel(this)" style="color:var(--err)">✖</button></div>';
   document.getElementById('pc_rows').appendChild(div);
 }
 function pcDecide(action) {

@@ -217,7 +217,7 @@
         <div class="ev approval">
           <b>⚠️ 需要人工确认</b> —— <span id="approval_text"></span>
           <div class="btns">
-            <button class="yes" onclick="respond(true)">✅ 批准执行</button>
+            <button class="yes" onclick="respond(true)">✓ 批准执行</button>
             <button class="no" onclick="respond(false)">❌ 拒绝</button>
           </div>
         </div>
@@ -509,7 +509,7 @@ function renderEvent(ev, live){
         `<div id="pc_rows">${rows}</div>` +
         `<button class="rbtn" onclick="pcAddRow()" style="margin-top:6px;color:var(--dim)">＋ 添加子问题</button>` +
         `<div style="margin-top:12px;display:flex;gap:8px;">
-           <button class="rbtn" id="pc_ok" style="background:var(--green);color:#fff;border-color:var(--green)" onclick="pcDecide('confirm')">✅ 按此执行</button>
+           <button class="rbtn" id="pc_ok" style="background:var(--green);color:#fff;border-color:var(--green)" onclick="pcDecide('confirm')">✓ 确认执行</button>
            <button class="rbtn pc-skip" style="color:var(--dim)" onclick="pcDecide('skip')">⏭ 本会话不再询问</button>
          </div>` +
         `<div style="font-size:11px;color:var(--dim);margin-top:6px">可直接修改子问题文字或删除；600 秒未确认将按原计划自动继续</div>`);

@@ -709,11 +709,20 @@ class ResearchAgent:
                 if tc.function.name == "note_write":
                     note_sync = self.sync_checklist_from_note(args.get("content", ""))
                 if tc.function.name == "request_replan":
-                    # ★Replan 全量留档：原因 + 新旧看板对照（学习与审计）
+                    # ★Replan 全量留档：原因 + 新旧看板对照 + 三类变动分类（学习与审计）
+                    old_ids = {str(it["id"]) for it in (self._replan_old_checklist or [])}
+                    new_ids = {str(it["id"]) for it in self.checklist}
+                    kept = [dict(it) for it in self.checklist
+                            if str(it["id"]) in old_ids and it["status"] == "completed"]
+                    replaced = [dict(it) for it in (self._replan_old_checklist or [])
+                                if str(it["id"]) not in new_ids]
+                    added = [dict(it) for it in self.checklist
+                             if str(it["id"]) not in old_ids]
                     self._emit_sub("replan", reason=args.get("reason", ""),
                                    replan_used=self.replan_used,
                                    new_checklist=[dict(it) for it in self.checklist],
-                                   old_checklist=self._replan_old_checklist or [])
+                                   old_checklist=self._replan_old_checklist or [],
+                                   kept=kept, replaced=replaced, added=added)
                 if tc.function.name in ("web_search", "fetch_url", "fetch_js"):
                     evidence.append(str(result)[:1000])
 
@@ -858,6 +867,7 @@ class ResearchAgent:
                       extra={"new_preferences": added,
                              "session_id": (self.session.id if self.session else "")})
         self.emit("final", used=budget.used, max=budget.max,
+                  replan_count=self.replan_used,
                   stop_reason=stopped_reason, run_id=rec["run_id"],
                   steps=step, answer=final,
                   total_ms=round((time.time() - t_run) * 1000))

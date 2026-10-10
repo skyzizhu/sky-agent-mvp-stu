@@ -461,6 +461,13 @@ function renderEvent(ev, live){
     case 'step': {
 
       ensureGroup(ev.step, `第 ${ev.step} 步`);
+      // 该步内发生重规划时，给分组标题追加徽标（向上找刚创建的分组）
+      if (ev.replan_happened) {
+        const g = [...document.querySelectorAll('#timeline details.ev')].pop();
+        if (g && !g.querySelector('summary').textContent.includes('已重规划')) {
+          g.querySelector('summary').innerHTML += ' <span style="background:#fff7ed;color:#b45309;border-radius:99px;padding:1px 8px;font-size:11px;margin-left:6px">🔄 已重规划</span>';
+        }
+      }
       const d = ev.detail || {};
       const td = d.token_detail || {};
       const mi = d.model_input || [];
@@ -491,12 +498,24 @@ function renderEvent(ev, live){
         `${it.status === 'completed' ? '✅' : '⚪'} [${esc(String(it.id))}] ${esc(it.q)}`).join('<br>');
       const newItems = (ev.new_checklist || []).map(it =>
         `${it.status === 'completed' ? '✅' : '⚪'} [${esc(String(it.id))}] ${esc(it.q)}`).join('<br>');
+      const list = (arr, color) => (arr || []).map(it =>
+        `<span style="color:${color}">[${esc(String(it.id))}] ${esc(it.q)}</span>`).join('；') || '（无）';
       addSub(sub,
         `🔄 <b>重规划</b>（第 ${ev.replan_used} 次）——计划已按新大纲重建`,
-        `<b>重规划原因</b>：${esc(ev.reason || '')}<br>` +
-        `<b>旧看板</b>：<br>${oldItems}<br><br>` +
-        `<b>新看板</b>：<br>${newItems}<br>` +
-        `<span style="color:var(--dim)">已完成核销的子问题已保留；未核销项已替换。</span>`);
+        `<b>为什么重规划</b>：${esc(ev.reason || '')}<br>` +
+        `<b>变动分类</b>：<br>` +
+        `　🟢 保留（已完成核销）：${list(ev.kept, '#137333')}<br>` +
+        `　🟠 替换（未核销即作废）：${list(ev.replaced, '#b45309')}<br>` +
+        `　🔵 新增：${list(ev.added, '#2563eb')}<br>` +
+        `<details><summary>查看完整新旧看板对照</summary><div class="d">` +
+        `<b>旧看板</b>：<br>${oldItems}<br><br><b>新看板</b>：<br>${newItems}</div></details>`);
+      // 给所在步骤分组标题追加「🔄 已重规划」徽标（用户扫一眼就知道路线改过）
+      const stepNum = (sub || '').split('.')[0];
+      const g = [...document.querySelectorAll('#timeline details.ev')].find(d =>
+        d.querySelector('summary') && d.querySelector('summary').textContent.includes(`第 ${stepNum} 步`));
+      if (g && !g.querySelector('summary').textContent.includes('已重规划')) {
+        g.querySelector('summary').innerHTML += ' <span style="background:#fff7ed;color:#b45309;border-radius:99px;padding:1px 8px;font-size:11px;margin-left:6px">🔄 已重规划</span>';
+      }
       break;
     }
 
@@ -651,7 +670,8 @@ function renderEvent(ev, live){
         // 计算元数据
         const wordCount = lastReportMd.length;
         const sec = ev.total_ms != null ? (ev.total_ms / 1000).toFixed(1) + 's' : '';
-        const metaStr = `约 ${wordCount.toLocaleString()} 字` + (sec ? ` · 耗时 ${sec}` : '') + ` · 消耗 ${ev.used.toLocaleString()} tok`;
+        const metaStr = `约 ${wordCount.toLocaleString()} 字` + (sec ? ` · 耗时 ${sec}` : '') + ` · 消耗 ${ev.used.toLocaleString()} tok` +
+          (ev.replan_count > 0 ? ` · 经历 ${ev.replan_count} 次重规划` : '');
         const metaEl = $('report_meta');
         if (metaEl) metaEl.textContent = `（${metaStr}）`;
 

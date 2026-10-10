@@ -253,7 +253,7 @@ class ResearchAgent:
 
     def __init__(self, emit=None, approver=None, stop_check=None,
                  budget_max=_DEFAULT, use_mcp=False, impl="agent_core",
-                 run_id=None, session=None):
+                 run_id=None, session=None, plan_confirm=False):
         self.emit = emit or _cli_emit
         self.approver = approver or _cli_approver
         self.stop_check = stop_check or (lambda: False)
@@ -264,6 +264,7 @@ class ResearchAgent:
         # budget_max=None 保持 None → Budget 不限额模式
         self.use_mcp = use_mcp
         self.impl = impl
+        self.plan_confirm = plan_confirm   # 计划确认开关（新会话首轮由宿主传入）
         self.stop_reason = "model_done"
         self._wrap_injected = False
         self.run_id = run_id   # 外部传入则沿用（Web 工作台），否则自生成
@@ -321,6 +322,11 @@ class ResearchAgent:
         return json.dumps({"status": "replanned", "replan_used": self.replan_used,
                            "note": "看板已按新大纲重建（已完成项已保留）。请继续研究。",
                            "checklist": self.checklist}, ensure_ascii=False)
+
+    def wait_plan_decision(self, timeout: int):
+        """计划确认等待钩子：默认宿主无交互界面，直接按未确认（None）继续。
+        Web 宿主覆写为阻塞等待用户决定。"""
+        return None
 
     def format_checklist_for_prompt(self) -> str:
         """生成供 LLM 当前轮感知的大纲待办核销看板。"""
@@ -505,6 +511,29 @@ class ResearchAgent:
         except Exception as e:
             errors.append(f"plan: {type(e).__name__}: {str(e)[:150]}")
             outline = {"goal": question, "sub_questions": [], "constraints": []}
+
+        # ★计划确认（Human-on-the-Plan）：规划完成后、落地前，交用户审阅。
+        # 用户可确认 / 修改子问题 / 跳过；超时 600 秒按原计划自动继续。
+        if self.plan_confirm and outline.get("sub_questions"):
+            self._emit_sub("plan_confirm", goal=outline.get("goal", ""),
+                           sub_questions=outline.get("sub_questions", []), timeout=600)
+            decision = self.wait_plan_decision(600) or {}
+            action = decision.get("action")
+            if action == "confirm":
+                edited = [r for r in (decision.get("edited") or [])
+                          if isinstance(r, dict) and (r.get("q") or "").strip()]
+                if edited:
+                    outline["sub_questions"] = [
+                        {"id": i + 1, "q": r["q"].strip(), "what_to_verify": ""}
+                        for i, r in enumerate(edited)]
+                    self._emit_sub("plan_decided", action="edit",
+                                   sub_questions=outline["sub_questions"])
+                else:
+                    self._emit_sub("plan_decided", action="confirm")
+            elif action == "skip":
+                self._emit_sub("plan_decided", action="skip")
+            else:
+                self._emit_sub("plan_decided", action="timeout")
 
         sub_qs = outline.get("sub_questions", [])
         self.checklist = [

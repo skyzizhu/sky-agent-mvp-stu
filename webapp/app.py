@@ -51,6 +51,7 @@ class ResearchAgentWeb(ResearchAgent):
         self._queue = []                      # 事件队列（SSE 消费）
         self._cond = threading.Condition()
         self._approval = None                 # {"event","approved","tool","args"}
+        self._plan_decision = None            # 计划确认 {"event","action","edited"}
         self._thread = None                   # 由路由在启动线程后回填
 
     # -- emit 注入：推进队列 --
@@ -108,6 +109,23 @@ class ResearchAgentWeb(ResearchAgent):
     def stop(self):
         self._stop.set()
 
+    # -- 计划确认：规划完成后阻塞等用户决定（确认/修改/跳过） --
+    def wait_plan_decision(self, timeout: int):
+        ev = threading.Event()
+        with self._cond:
+            self._plan_decision = {"event": ev, "action": None, "edited": None}
+        ev.wait(timeout)
+        return self._plan_decision
+
+    def resolve_plan_decision(self, action: str, edited=None):
+        d = self._plan_decision
+        if d and not d["event"].is_set():
+            d["action"] = action
+            d["edited"] = edited
+            d["event"].set()
+            return True
+        return False
+
 
 # ---------- 路由 ----------
 @app.get("/")
@@ -153,11 +171,13 @@ def start_research(body: ResearchIn):
                   else config.BUDGET_TIERS.get(body.tier,
                        config.BUDGET_TIERS["standard"]))   # unlimited 档在配置里为 None
     session = SESSION_STORE.get_or_create(body.session_id) if body.session_id else SESSION_STORE.create()
+    first_run = session.run_count == 0   # 计划确认只在会话首轮触发
     session.add_run(run_id, body.question[:80])
     agent = ResearchAgentWeb(run_id, impl="webapp",
                              use_mcp=os.getenv("MCP_FS") == "1",
                              budget_max=budget_max,
                              session=session,
+                             plan_confirm=(first_run and not session.meta.get("plan_confirm_skip")),
                              events_path=EV_DIR / f"events_{run_id}.jsonl")
     # ★会话元信息写入事件流头部（队列+存档第一行）：历史回放时据此找到所属会话，
     #   实现"一次会话多轮查询"的完整时间线还原
@@ -227,6 +247,24 @@ def stop(run_id: str):
         return JSONResponse({"error": "run not found"}, status_code=404)
     RUNS[run_id]["agent"].stop()
     return {"ok": True}
+
+
+class PlanDecisionIn(BaseModel):
+    action: str                 # confirm / skip
+    edited: list | None = None  # action=confirm 时为用户修改后的子问题清单
+
+
+@app.post("/api/research/{run_id}/plan_decision")
+def plan_decision(run_id: str, body: PlanDecisionIn):
+    """计划确认卡的决定回填：确认（含修改）/ 本会话跳过。"""
+    if run_id not in RUNS:
+        return JSONResponse({"error": "run not found"}, status_code=404)
+    agent = RUNS[run_id]["agent"]
+    ok = agent.resolve_plan_decision(body.action, body.edited)
+    if ok and body.action == "skip" and agent.session is not None:
+        agent.session.meta["plan_confirm_skip"] = True   # 本会话不再询问
+        agent.session.save_meta()
+    return {"ok": ok}
 
 
 @app.get("/api/runs/{run_id}/events")

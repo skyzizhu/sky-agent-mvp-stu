@@ -493,6 +493,44 @@ function renderEvent(ev, live){
       addSub(sub, `⚠️ ${esc(ev.note)}`); break;
     case 'progress':
       addSub(sub, `📊 ${esc(ev.text)}`); break;
+    case 'plan_confirm': {
+      const subs = ev.sub_questions || [];
+      const rows = subs.map((sq, i) => `
+        <div class="pc-row" style="margin:8px 0;">
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span class="sub">${i + 1}</span>
+            <input class="pc-q" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--txt);font-size:12.5px" value="${esc(sq.q || '')}">
+            <button class="rbtn pc-del" onclick="pcDel(this)" style="color:var(--red)">✖</button>
+          </div>
+          ${sq.what_to_verify ? `<div style="font-size:11px;color:var(--dim);margin:2px 0 0 24px">查证要点：${esc(sq.what_to_verify)}</div>` : ''}
+        </div>`).join('');
+      const card = addSub(sub,
+        `📋 <b>请确认研究计划</b> — 目标：${esc(ev.goal || '')}`,
+        `<div id="pc_rows">${rows}</div>` +
+        `<button class="rbtn" onclick="pcAddRow()" style="margin-top:6px;color:var(--dim)">＋ 添加子问题</button>` +
+        `<div style="margin-top:12px;display:flex;gap:8px;">
+           <button class="rbtn" id="pc_ok" style="background:var(--green);color:#fff;border-color:var(--green)" onclick="pcDecide('confirm')">✅ 按此执行</button>
+           <button class="rbtn pc-skip" style="color:var(--dim)" onclick="pcDecide('skip')">⏭ 本会话不再询问</button>
+         </div>` +
+        `<div style="font-size:11px;color:var(--dim);margin-top:6px">可直接修改子问题文字或删除；600 秒未确认将按原计划自动继续</div>`);
+      if (card && live) card.id = 'plan_confirm_card';
+      break;
+    }
+    case 'plan_decided': {
+      const label = { confirm: '✅ 计划已确认，开始执行',
+                      edit: '✏️ 计划已修改，按新大纲执行',
+                      skip: '⏭ 已跳过确认，直接执行',
+                      timeout: '⏱ 确认超时，按原计划自动继续' }[ev.action] || ev.action;
+      if (ev.sub_questions) {
+        addSub(sub, `📋 ${label}：` + (ev.sub_questions || []).map(sq => esc(sq.q || '')).join('；'));
+      } else {
+        addSub(sub, `📋 ${label}`);
+      }
+      var pc = document.getElementById('plan_confirm_card');
+      if (pc) { pc.style.opacity = .5; pc.querySelectorAll('button,input').forEach(function(b){ b.disabled = true; }); }
+      break;
+    }
+
     case 'replan': {
       const oldItems = (ev.old_checklist || []).map(it =>
         `${it.status === 'completed' ? '✅' : '⚪'} [${esc(String(it.id))}] ${esc(it.q)}`).join('<br>');
@@ -901,6 +939,35 @@ async function loadRun(id){
     return;
   }
   renderSingleRunView(id, d);   // 旧存档（无会话信息）：单运行回放
+}
+
+// —— 计划确认卡：行操作与决策回填 ——
+function pcDel(btn) {
+  btn.closest('.pc-row').remove();
+  document.querySelectorAll('#pc_rows .pc-row .sub').forEach(function(s, i) { s.textContent = i + 1; });
+}
+function pcAddRow() {
+  var div = document.createElement('div');
+  div.className = 'pc-row';
+  div.style.margin = '8px 0';
+  var n = document.querySelectorAll('#pc_rows .pc-row').length + 1;
+  div.innerHTML = '<div style="display:flex;gap:6px;align-items:center;">' +
+    '<span class="sub">' + n + '</span>' +
+    '<input class="pc-q" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--txt);font-size:12.5px">' +
+    '<button class="rbtn pc-del" onclick="pcDel(this)" style="color:var(--red)">✖</button></div>';
+  document.getElementById('pc_rows').appendChild(div);
+}
+function pcDecide(action) {
+  var edited = [];
+  document.querySelectorAll('#pc_rows .pc-row').forEach(function(row) {
+    var q = (row.querySelector('.pc-q') || {}).value || '';
+    if (q.trim()) edited.push({ q: q.trim() });
+  });
+  fetch('/api/research/' + runId + '/plan_decision', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: action, edited: action === 'confirm' ? edited : null }) });
+  var pc = document.getElementById('plan_confirm_card');
+  if (pc) { pc.style.opacity = .5; pc.querySelectorAll('button,input').forEach(function(b){ b.disabled = true; }); }
 }
 
 async function stopRun(){

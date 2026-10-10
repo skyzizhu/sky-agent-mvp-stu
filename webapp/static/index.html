@@ -504,7 +504,7 @@ function renderEvent(ev, live){
           </div>
           ${sq.what_to_verify ? `<div style="font-size:11px;color:var(--dim);margin:2px 0 0 24px">查证要点：${esc(sq.what_to_verify)}</div>` : ''}
         </div>`).join('');
-      const card = addSub(sub,
+      const li = addSub(sub,
         `📋 <b>请确认研究计划</b> — 目标：${esc(ev.goal || '')}`,
         `<div id="pc_rows">${rows}</div>` +
         `<button class="rbtn" onclick="pcAddRow()" style="margin-top:6px;color:var(--dim)">＋ 添加子问题</button>` +
@@ -513,7 +513,14 @@ function renderEvent(ev, live){
            <button class="rbtn pc-skip" style="color:var(--dim)" onclick="pcDecide('skip')">⏭ 本会话不再询问</button>
          </div>` +
         `<div style="font-size:11px;color:var(--dim);margin-top:6px">可直接修改子问题文字或删除；600 秒未确认将按原计划自动继续</div>`);
-      if (card && live) card.id = 'plan_confirm_card';
+      // ★阻塞式决策点必须可见：自动展开所在分组 + 自身详情，并滚动到卡片
+      //（确认卡的输入框和按钮在 .dx 里——颗粒自身默认折叠，必须手动展开）
+      const gd = li.closest('details');
+      if (gd) gd.open = true;
+      const own = li.querySelector(':scope > details');
+      if (own) own.open = true;
+      if (live) { li.id = 'plan_confirm_card'; }   // 卡片 = 整个颗粒（置灰时连同输入一起禁用）
+      setTimeout(function(){ li.scrollIntoView({ block: 'center' }); }, 80);
       break;
     }
     case 'plan_decided': {

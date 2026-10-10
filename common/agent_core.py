@@ -84,6 +84,33 @@ def _cli_approver(tool: str, args_json: str):
     return ask_human(tool, args_json)
 
 
+# ★Replan（重规划）：模型自主申报"计划需要调整"的工具（零副作用——
+# 只登记新大纲，由系统校验后生效）；已核销项保留，未核销项替换。
+# 判断权在模型（发现计划不合理），执行权在代码（次数/数量校验、看板重建）。
+REPLAN_TOOL = [{
+    "type": "function",
+    "function": {
+        "name": "request_replan",
+        "description": "申报重规划：仅当执行中发现研究大纲已不符合用户目标时使用——"
+                       "例如某个子问题被证实无法查证、两个子问题实际重复、或出现了必须纳入的新方向。"
+                       "只申报、不立即生效（系统校验后重建看板）；已核销的子问题不受影响。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {"type": "string", "description": "为什么需要重规划（具体、可验证）"},
+                "revised_sub_questions": {"type": "array",
+                    "description": "调整后的完整子问题列表（含未变的）",
+                    "items": {"type": "object", "properties": {
+                        "id": {"type": "integer"},
+                        "q": {"type": "string", "description": "子问题"},
+                        "what_to_verify": {"type": "string", "description": "查证要点"}}}},
+            },
+            "required": ["reason", "revised_sub_questions"],
+        },
+    },
+}]
+
+
 CIRCUIT_BREAKER_MSG = ("⚠️ 工具已连续失败多次。禁止再用相同方式尝试，"
                        "立即基于【已有信息】输出阶段性结论（如实标注未获取到的部分），"
                        "不要浪费剩余预算继续尝试。")
@@ -242,6 +269,8 @@ class ResearchAgent:
         self.run_id = run_id   # 外部传入则沿用（Web 工作台），否则自生成
         self.session = session   # Session 对象（多轮研究会话）
         self.checklist = []
+        self.replan_used = 0
+        self._replan_old_checklist = None   # Replan 已使用次数（每 Run 至多 2 次）
         self._step_cur = 0
         self._sub = 0
 
@@ -251,6 +280,47 @@ class ResearchAgent:
         self._sub += 1
         p["sub"] = f"{self._step_cur}.{self._sub}"
         self.emit(type, **p)
+
+    def _request_replan_tool(self, reason: str, revised_sub_questions: list) -> str:
+        """request_replan 的执行体：校验并应用重规划。
+        已核销项保留；未核销项替换为新列表；system 大纲同步替换。"""
+        self._replan_old_checklist = [dict(it) for it in self.checklist]   # 留存旧看板供事件对照
+        if self.replan_used >= 2:
+            return json.dumps({"status": "rejected",
+                               "note": "重规划次数已达上限（2 次），请基于当前看板继续并如实标注缺口。"},
+                              ensure_ascii=False)
+        if not revised_sub_questions or not isinstance(revised_sub_questions, list):
+            return json.dumps({"status": "rejected",
+                               "note": "revised_sub_questions 为空，重规划被拒绝。"}, ensure_ascii=False)
+        revised = revised_sub_questions[:3]   # 与初版规划同规：不超过 3 个
+        # 已核销项保留：把旧看板中已完成的项按 id 合并进新列表
+        done = [dict(it) for it in self.checklist if it["status"] == "completed"]
+        for d in done:
+            if not any(str(r.get("id")) == str(d["id"]) for r in revised):
+                revised.append({"id": d["id"], "q": d["q"],
+                                "what_to_verify": d.get("what_to_verify", "")})
+        # 重建看板：已完成项保留状态与摘要，其余重置为待查证
+        self.checklist = [
+            {"id": r.get("id", i + 1), "q": r.get("q", ""),
+             "what_to_verify": r.get("what_to_verify", ""), "status": "pending", "summary": ""}
+            for i, r in enumerate(revised)
+        ]
+        for d in done:
+            for it in self.checklist:
+                if str(it["id"]) == str(d["id"]):
+                    it["status"] = "completed"
+                    it["summary"] = d.get("summary", "")
+        self.replan_used += 1
+        # system 中的大纲同步替换（简单字符串定位，避免正则嵌套转义问题）
+        for m in self._messages_ref or []:
+            if isinstance(m, dict) and m.get("role") == "system" and "【研究大纲】" in (m.get("content") or ""):
+                head = m["content"][:m["content"].index("【研究大纲】")]
+                m["content"] = head + "【研究大纲（已重规划 v%d）】\n" + json.dumps(
+                    {"goal": self._replan_goal, "sub_questions": self.checklist}, ensure_ascii=False)
+                break
+        return json.dumps({"status": "replanned", "replan_used": self.replan_used,
+                           "note": "看板已按新大纲重建（已完成项已保留）。请继续研究。",
+                           "checklist": self.checklist}, ensure_ascii=False)
 
     def format_checklist_for_prompt(self) -> str:
         """生成供 LLM 当前轮感知的大纲待办核销看板。"""
@@ -344,6 +414,7 @@ class ResearchAgent:
             "3. 引用格式（硬性）：报告中每个事实性陈述后必须紧跟 [n](完整URL) 形式的引用编号，"
             "并在报告末尾用'## 参考'小节逐条列出 [n] 完整链接——"
             "严禁只写域名文字代替编号引用；\n"
+            "4a. 重规划（重要）：执行中若发现以下任一情况，应调用 request_replan 申报调整大纲（每 Run 最多 2 次）：① 用户问题中的核心对象经多次检索确认不存在或查无此人/物（此时应申报将子问题改为查证'该对象是否存在'）；② 某个子问题被证实无法查证且无替代来源；③ 两个子问题实际重复；④ 出现必须纳入的新方向。reason 必须具体可验证（附检索证据）；注意：搜索结果少≠对象不存在，需多角度确认后才申报；\n"
             "4. 充分度收敛门禁（硬性）：深度研究不等于无休止穷举！对照【用户问题】，"
             "只要核心主干要点（产品定位、核心工作流/链路、交互入口、权限与安全边界）"
             "已有事实和来源支撑（以笔记为准），即判定为信息充分！"
@@ -370,8 +441,9 @@ class ResearchAgent:
         from common.cache import SessionToolCache
         self.cache = SessionToolCache()
         self.tools_registry = dict(tools_mod.REAL_REGISTRY)
+        self.tools_registry["request_replan"] = self._request_replan_tool
         self.tools_registry["update_checklist"] = self.update_checklist_item
-        all_tools = list(tools_mod.REAL_TOOLS)
+        all_tools = list(tools_mod.REAL_TOOLS) + REPLAN_TOOL
 
         self.mcp_clients = []
         if self.use_mcp:
@@ -454,6 +526,9 @@ class ResearchAgent:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": question},
         ]
+        # ★Replan 依赖：messages 引用（重规划时替换 system 大纲）+ 当前目标
+        self._messages_ref = messages
+        self._replan_goal = outline.get("goal", question)
         stopped_reason = "model_done"
         evidence = []   # 检索/抓取的原始结果（供评测 judge 核对有据性）
         budget_warned = False
@@ -633,6 +708,12 @@ class ResearchAgent:
                 note_sync = None
                 if tc.function.name == "note_write":
                     note_sync = self.sync_checklist_from_note(args.get("content", ""))
+                if tc.function.name == "request_replan":
+                    # ★Replan 全量留档：原因 + 新旧看板对照（学习与审计）
+                    self._emit_sub("replan", reason=args.get("reason", ""),
+                                   replan_used=self.replan_used,
+                                   new_checklist=[dict(it) for it in self.checklist],
+                                   old_checklist=self._replan_old_checklist or [])
                 if tc.function.name in ("web_search", "fetch_url", "fetch_js"):
                     evidence.append(str(result)[:1000])
 

@@ -486,6 +486,20 @@ function renderEvent(ev, live){
       addSub(sub, `⚠️ ${esc(ev.note)}`); break;
     case 'progress':
       addSub(sub, `📊 ${esc(ev.text)}`); break;
+    case 'replan': {
+      const oldItems = (ev.old_checklist || []).map(it =>
+        `${it.status === 'completed' ? '✅' : '⚪'} [${esc(String(it.id))}] ${esc(it.q)}`).join('<br>');
+      const newItems = (ev.new_checklist || []).map(it =>
+        `${it.status === 'completed' ? '✅' : '⚪'} [${esc(String(it.id))}] ${esc(it.q)}`).join('<br>');
+      addSub(sub,
+        `🔄 <b>重规划</b>（第 ${ev.replan_used} 次）——计划已按新大纲重建`,
+        `<b>重规划原因</b>：${esc(ev.reason || '')}<br>` +
+        `<b>旧看板</b>：<br>${oldItems}<br><br>` +
+        `<b>新看板</b>：<br>${newItems}<br>` +
+        `<span style="color:var(--dim)">已完成核销的子问题已保留；未核销项已替换。</span>`);
+      break;
+    }
+
     case 'checklist': {
       const items = (ev.items || []).map(it => {
         const icon = it.status === 'completed' ? '✅' : (it.status === 'in_progress' ? '⏳' : '⚪');

@@ -207,6 +207,7 @@
      - **笔记感知自动核销（Heuristic Auto-Sync）**：模型调用 `note_write` 沉淀含 `【子问题X】` 发现时，运行时自动将对应子问题核销为 `completed` 并抽取第一句作为依据，实现双重兜底。
   4. **逐轮节拍动态刷新**：在主循环每一步的 `[系统进度]` user 提示词末尾，动态拼入最新看板状态（`[x] 已完成` / `[~] 正在查证` / `[ ] 待查证`），模型时刻清楚进度。
   5. **全量核销自发收尾门禁**：一旦所有子问题均核销为 `completed`，运行时在下一轮立即注入强提示：“🎉 所有大纲子问题已全部核销完成！核心事实已充分，请立即 note_read 并输出完整报告，严禁继续发散检索”，促使模型自发收尾交卷。
+  6. **落地与全量留档**：`client.chat.completions.create` + `response_format={"type": "json_object"}`；planner **不带 tools 参数**（只拆题不看工具箱，规划-执行分离）；所耗 token 实时计入 `budget`；产生 `action="plan"` 与 `action="checklist"` 事件推送前端/CLI；**plan 事件带与 step 同构的全量详单**（①完整输入 messages ②`model_dump()` 全字段输出 ③token 明细含 reasoning/cached），Web 端 0.3 卡片可逐字段下钻；将大纲动态拼入后续主循环的 `system_prompt` 中，并作为最终返回的 `outline` 资产供后续评测比对。
      - **注意：此为软引导，非物理接管**——此时工具箱仍在，模型自己调 note_read 取笔记（若它无视提示继续搜索，95% 硬收尾的物理接管仍会兜底，两种笔记取回方式对照见 4.6）。
 
 ### 小节点 4.0-c 计划确认（Human-on-the-Plan，v1.0.1 新增）
@@ -218,9 +219,6 @@
 - **实现维度**：内核 plan_confirm 开关（宿主传入）+ wait_plan_decision 钩子（默认宿主无交互直接继续，CLI 零影响）；Web 宿主覆写为阻塞等待 + /plan_decision 端点回填；触发范围 = 新会话首轮（run_count==0 且无 skip 标记），同会话追问不重复弹。
 - **作用与目标**：规划错了，后面 20 步全废——出发前 10 秒的确认是最便宜的错误拦截；用户获得计划的方向控制权（Replan 是"途中 agent 自主修正"，计划确认是"开工前用户把关"，互补不重复）。
 - **注意**：仅新会话首轮触发（追问轮大纲通常沿用上轮方向）；修改只支持子问题文字/删除/新增（what_to_verify 暂随修改清空）；超时自动继续而非取消——研究无危险，白等才是损失。
-- **怎么做**：`client.chat.completions.create` + `response_format={"type": "json_object"}`；planner **不带 tools 参数**（只拆题不看工具箱，规划-执行分离）；所耗 token 实时计入 `budget`；产生 `action="plan"` 与 `action="checklist"` 事件推送前端/CLI；**plan 事件带与 step 同构的全量详单**（①完整输入 messages ②`model_dump()` 全字段输出 ③token 明细含 reasoning/cached），Web 端 0.3 卡片可逐字段下钻；将大纲动态拼入后续主循环的 `system_prompt` 中，并作为最终返回的 `outline` 资产供后续评测比对。
-- **作用与目标**：解决模型长程探索中"最初定的大纲被后续海量网页信息冲淡而遗忘"的执行脱节问题；让模型从"盲目漫游"变成"手持清单逐项打勾核销"，从根本上保障调研逻辑聚焦与自发收敛。
-- **注意**：规划消耗 token 必须记账；大纲解析需兼容容错（JSON 解析失败时平滑降级）；核销更新需触发实时事件推送。
 
 ### 小节点 4.1 可注入内核（ResearchAgent）
 - **做什么**：构造时接收 emit/approver/stop_check/budget_max/use_mcp/impl/**session**；`run(question)` 执行完整研究并返回结果（answer/stop_reason/steps/tokens/errors/outline/saved_calls）。`session` 注入多轮研究会话（大节点 16）：启动注入历史上下文，结束保存摘要与发现，RunLog `extra.session_id` 溯源。

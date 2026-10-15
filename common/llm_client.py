@@ -50,6 +50,13 @@ def call_llm(client: OpenAI, messages: list, tools: list | None = None, **extra)
     if tools:
         kwargs["tools"] = tools
     resp = client.chat.completions.create(**kwargs)
+    # ★空响应防御：服务端异常时可能返回 choices 为空（不抛网络错误、
+    # SDK 也不判为可重试）——不防御则上层 TypeError，且绕过兜底链。
+    # 统一转成 ValueError 走上层既有的异常处理（error 出口/重试/兜底）。
+    if not getattr(resp, "choices", None):
+        raise ValueError(
+            f"模型服务返回了空响应（choices 为空，finish 可能异常）——"
+            f"服务端可能过载，请稍后重试")
     # 内建录制：若挂了 RECORDER，把"此刻"的请求与完整响应定格存档。
     # 必须 deepcopy——messages 是引用，loop 会继续往里 append，
     # 不拷贝的话所有记录都会"变成"最后一次调用的样子（共享可变状态的经典bug）。
